@@ -38,12 +38,15 @@ async function call(a, p, msg) {
   const rt = RT, isRead = READ.has(a);
   nreq++; $('#bar').style.width = '70%'; if (msg) busy(msg);
   try {
-    let r = null;
+    let r = null, busyTry = 0;
     for (let n = 0, max = isRead ? 3 : 1; n < max; n++) {
       const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 70000);
       try {
         const res = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ act: a, tok: S.tok, p: p || {} }), signal: ctl.signal });
-        r = await res.json(); break;
+        r = await res.json();
+        // server menolak karena antrean penuh (belum memproses apa pun) -> aman untuk dicoba lagi otomatis
+        if (r && !r.ok && /^Server sedang sibuk/.test(r.e) && busyTry < 4) { busyTry++; r = null; busy('Server sedang ramai, mencoba lagi…'); await sleep(1200 + Math.random() * 2500); n--; continue; }
+        break;
       } catch (e) {
         if (n === max - 1) throw new Error(e.name === 'AbortError' ? 'Server terlalu lama merespons. Coba lagi.' : 'Tidak bisa terhubung ke server. Periksa internet, dan pastikan Web App Apps Script di-deploy dengan akses "Siapa saja".');
         await sleep(700 * (n + 1));
@@ -89,7 +92,7 @@ async function init() {
 function render() { S.me ? main() : loginView(); }
 function loginView() {
   LT = 1;
-  $('#app').innerHTML = `<div class="login"><div class="card"><div style="text-align:center"><div class="mark" style="margin:auto;width:48px;height:48px;font-size:24px">🎓</div><h1>Kelas Online YPP</h1><p class="mu" style="margin:0 0 14px">Ruang belajar sekolah kita</p></div>
+  $('#app').innerHTML = `<div class="login"><div class="card"><div style="text-align:center"><div class="mark" style="margin:auto;width:48px;height:48px;font-size:24px">🎓</div><h1>Kelas Pintar</h1><p class="mu" style="margin:0 0 14px">Ruang belajar sekolah kita</p></div>
 <div class="seg"><button id="t1" class="on" onclick="lt(1)">Siswa</button><button id="t2" onclick="lt(2)">Guru / Admin</button></div>
 <div id="f1"><label class="f">NISN</label><input id="nisn" inputmode="numeric" autocomplete="off"><label class="f">Tanggal lahir</label><input id="lhr" type="date"></div>
 <div id="f2" hidden><label class="f">Username</label><input id="usr" autocapitalize="none" autocomplete="username"><label class="f">Password</label><input id="pw" type="password" autocomplete="current-password"></div>
