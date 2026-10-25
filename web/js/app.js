@@ -221,7 +221,7 @@ function drawW(first) {
 
 /* ---------- pengaman tampilan kuis (penghalang, bukan jaminan mutlak) ---------- */
 const SEC = { h: [] };
-function secureOff() { SEC.h.forEach(x => x[0].removeEventListener(x[1], x[2], true)); SEC.h = []; }
+function secureOff() { SEC.h.forEach(x => x[0].removeEventListener(x[1], x[2], x[3])); SEC.h = []; }
 function secureOn() {
   secureOff(); const o = $('#md'); if (!o) return; o.classList.add('secure');
   const t = (S.me.nama + ' · ' + (S.me.kelas || '') + ' · ' + new Date().toLocaleString('id-ID')).replace(/[<>&"']/g, '');
@@ -235,9 +235,13 @@ function secureOn() {
     if (k === 'printscreen') { try { navigator.clipboard.writeText(''); } catch (x) {} o.classList.add('hide'); setTimeout(() => o.classList.remove('hide'), 1500); }
   };
   const hide = () => o.classList.add('hide'), show = () => o.classList.remove('hide');
-  [[o, 'contextmenu', stop], [o, 'selectstart', stop], [o, 'dragstart', stop], [document, 'copy', stop], [document, 'cut', stop], [document, 'keydown', key], [document, 'keyup', key],
-   [document, 'visibilitychange', () => document.hidden ? hide() : show()], [window, 'blur', hide], [window, 'focus', show]]
-    .forEach(x => { x[0].addEventListener(x[1], x[2], true); SEC.h.push(x); });
+  // blur/focus elemen anak (mis. tombol yang hilang saat soal digambar ulang) ikut sampai ke window pada fase capture,
+  // jadi hanya blur/focus milik window itu sendiri yang dihitung
+  const wblur = e => { if (e.target === window) hide(); }, wfocus = e => { if (e.target === window) show(); };
+  [[o, 'contextmenu', stop, true], [o, 'selectstart', stop, true], [o, 'dragstart', stop, true], [document, 'copy', stop, true], [document, 'cut', stop, true], [document, 'keydown', key, true], [document, 'keyup', key, true],
+   [document, 'visibilitychange', () => document.hidden ? hide() : show(), false], [window, 'blur', wblur, false], [window, 'focus', wfocus, false],
+   [o, 'pointerdown', () => { if (document.hasFocus() && !document.hidden) show(); }, false]]
+    .forEach(x => { x[0].addEventListener(x[1], x[2], x[3]); SEC.h.push(x); });
 }
 function pick(j) { W.a[W.i] = String(j); drawW(); }
 async function sendW() {
