@@ -604,13 +604,20 @@ const ACT = {
       'Buat ' + pg + ' soal pilihan ganda (tepat 4 opsi tanpa awalan huruf, "k" = indeks kunci 0-3) dan ' + ur + ' soal uraian ("k" = pedoman skor singkat). ' +
       'Bahasa Indonesia baku, jelas, tingkat kognitif bervariasi (C1-C4), hanya satu jawaban benar. ' +
       'Balas HANYA JSON array: [{"t":"pg","q":"...","o":["..","..","..",".."],"k":0},{"t":"uraian","q":"...","k":"..."}]';
-    const req = {
-      method: 'post', contentType: 'application/json', headers: { 'x-goog-api-key': key }, muteHttpExceptions: true,
-      payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.6, maxOutputTokens: 16384 } })
-    };
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model_(me)) + ':generateContent';
-    let r = UrlFetchApp.fetch(url, req);
-    if ([429, 500, 503].indexOf(r.getResponseCode()) >= 0) { Utilities.sleep(2500); r = UrlFetchApp.fetch(url, req); } // coba ulang sekali
+    const mdl = model_(me), url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(mdl) + ':generateContent';
+    let r;
+    // Matikan/minimalkan "thinking" supaya generate cepat. Jika model menolak konfigurasinya (400), coba konfigurasi lain, terakhir tanpa thinkingConfig.
+    for (const tc of thinkCfgs_(mdl)) {
+      const gc = { responseMimeType: 'application/json', temperature: 0.6, maxOutputTokens: 16384 };
+      if (tc) gc.thinkingConfig = tc;
+      const req = {
+        method: 'post', contentType: 'application/json', headers: { 'x-goog-api-key': key }, muteHttpExceptions: true,
+        payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: gc })
+      };
+      r = UrlFetchApp.fetch(url, req);
+      if ([429, 500, 503].indexOf(r.getResponseCode()) >= 0) { Utilities.sleep(2500); r = UrlFetchApp.fetch(url, req); } // coba ulang sekali
+      if (r.getResponseCode() !== 400) break;
+    }
     if (r.getResponseCode() !== 200) throw new Error('Gemini ' + r.getResponseCode() + ': ' + r.getContentText().slice(0, 200));
     const a = parseSoal(r.getContentText());
     if (!a.length) throw new Error('AI tidak mengembalikan soal. Perjelas topik lalu generate ulang');
@@ -619,6 +626,13 @@ const ACT = {
 };
 
 /* =====================  PARSER HASIL AI  ===================== */
+/* Konfigurasi thinking Gemini per model (urut dari yang dicoba pertama). null = tanpa thinkingConfig. */
+function thinkCfgs_(m) {
+  m = String(m || '').toLowerCase();
+  if (/pro/.test(m)) return [/gemini-3/.test(m) ? { thinkingLevel: 'low' } : { thinkingBudget: 128 }, null]; // seri Pro tidak bisa dimatikan penuh
+  if (/gemini-3/.test(m)) return [{ thinkingLevel: 'minimal' }, { thinkingBudget: 0 }, null];
+  return [{ thinkingBudget: 0 }, { thinkingLevel: 'minimal' }, null]; // 2.5 Flash/Flash-Lite dan alias *-latest
+}
 function parseSoal(raw) {
   const j = JSON.parse(raw), c = (j.candidates || [])[0];
   if (!c || !c.content) throw new Error('AI tidak memberi jawaban (' + ((c && c.finishReason) || (j.promptFeedback && j.promptFeedback.blockReason) || 'kosong') + ')');
