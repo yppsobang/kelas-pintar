@@ -19,8 +19,16 @@ window.addEventListener('error', e => toast('Error: ' + e.message, 1));
 async function run(f) { try { return await f(); } catch (e) { toast(e.message || String(e), 1); } }
 function busy(m) { if (m) { $('#bm').textContent = m; $('#busy').classList.add('on'); } else if (!nreq) $('#busy').classList.remove('on'); }
 function modal(h) { closeM(); const o = document.createElement('div'); o.className = 'ov'; o.id = 'md'; o.innerHTML = `<div class="sheet">${h}</div>`; o.addEventListener('mousedown', e => { if (e.target === o && !o.dataset.lock) closeM(); }); document.body.appendChild(o); return o; }
-function closeM() { const o = $('#md'); if (o) o.remove(); }
-function sure(msg, label) { return new Promise(res => { modal(`<h3 style="margin-top:0">Konfirmasi</h3><p>${E(msg)}</p><div class="row"><button class="btn" id="cn">Batal</button><button class="btn pri" id="cy">${E(label || 'Ya')}</button></div>`); $('#cn').onclick = () => { closeM(); res(false); }; $('#cy').onclick = () => { closeM(); res(true); }; }); }
+function closeM() { secureOff(); const o = $('#md'); if (o) o.remove(); }
+function sure(msg, label) { // tampil di atas jendela lain (jendela kuis tidak ikut tertutup)
+  return new Promise(res => {
+    const o = document.createElement('div'); o.className = 'ov'; o.id = 'cf'; o.style.zIndex = 90;
+    o.innerHTML = `<div class="sheet"><h3 style="margin-top:0">Konfirmasi</h3><p>${E(msg)}</p><div class="row"><button class="btn" id="cn">Batal</button><button class="btn pri" id="cy">${E(label || 'Ya')}</button></div></div>`;
+    document.body.appendChild(o);
+    const done = v => { o.remove(); res(v); };
+    $('#cn').onclick = () => done(false); $('#cy').onclick = () => done(true);
+  });
+}
 const head = t => `<div class="hd"><h3 style="margin:0">${t}</h3><button class="x" onclick="closeM()">✕</button></div>`;
 const av = n => `<div class="av" style="background:${COL[[...String(n)].reduce((a, c) => a + c.charCodeAt(0), 0) % COL.length]}">${E(String(n).trim().charAt(0).toUpperCase())}</div>`;
 
@@ -208,7 +216,28 @@ function drawW(first) {
   }
   if (n) h += `<div class="dots">${W.a.map((x, k) => `<span class="${k == i ? 'cur' : ''} ${x !== '' ? 'fill' : ''}" onclick="W.i=${k};drawW()"></span>`).join('')}</div>`;
   h += `<div class="row">${i > 0 ? '<button class="btn" onclick="W.i--;drawW()">← Kembali</button>' : ''}<div class="sp" style="flex:1"></div>${fin ? '<button class="btn pri" onclick="sendW()">Kirim jawaban</button>' : '<button class="btn pri" onclick="W.i++;drawW()">' + (i == n - 1 ? 'Selesai →' : 'Lanjut →') + '</button>'}</div>`;
-  if (first) { modal(h); $('#md').dataset.lock = 1; } else $('#md .sheet').innerHTML = h;
+  if (first) { modal(h); $('#md').dataset.lock = 1; if (p.tipe === 'kuis') secureOn(); } else $('#md .sheet').innerHTML = h;
+}
+
+/* ---------- pengaman tampilan kuis (penghalang, bukan jaminan mutlak) ---------- */
+const SEC = { h: [] };
+function secureOff() { SEC.h.forEach(x => x[0].removeEventListener(x[1], x[2], true)); SEC.h = []; }
+function secureOn() {
+  secureOff(); const o = $('#md'); if (!o) return; o.classList.add('secure');
+  const t = (S.me.nama + ' · ' + (S.me.kelas || '') + ' · ' + new Date().toLocaleString('id-ID')).replace(/[<>&"']/g, '');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="170"><text x="10" y="95" transform="rotate(-22 240 85)" font-size="13" font-family="sans-serif" fill="#808080" fill-opacity=".28">${t}</text></svg>`;
+  const wm = document.createElement('div'); wm.className = 'wm'; wm.style.backgroundImage = 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")'; o.appendChild(wm);
+  const field = e => e.target && /^(TEXTAREA|INPUT)$/.test(e.target.tagName);
+  const stop = e => { if (e.type === 'selectstart' && field(e)) return; e.preventDefault(); };
+  const key = e => {
+    const k = String(e.key || '').toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && 'cxpsu'.indexOf(k) >= 0 && k.length === 1) e.preventDefault();
+    if (k === 'printscreen') { try { navigator.clipboard.writeText(''); } catch (x) {} o.classList.add('hide'); setTimeout(() => o.classList.remove('hide'), 1500); }
+  };
+  const hide = () => o.classList.add('hide'), show = () => o.classList.remove('hide');
+  [[o, 'contextmenu', stop], [o, 'selectstart', stop], [o, 'dragstart', stop], [document, 'copy', stop], [document, 'cut', stop], [document, 'keydown', key], [document, 'keyup', key],
+   [document, 'visibilitychange', () => document.hidden ? hide() : show()], [window, 'blur', hide], [window, 'focus', show]]
+    .forEach(x => { x[0].addEventListener(x[1], x[2], true); SEC.h.push(x); });
 }
 function pick(j) { W.a[W.i] = String(j); drawW(); }
 async function sendW() {
@@ -280,7 +309,7 @@ function rSO() {
   $('#sc').textContent = SO.length ? '(' + SO.length + ')' : '';
   $('#sl').innerHTML = SO.length ? SO.map((q, i) => `<div class="q"><div class="row" style="margin:0"><b>${i + 1}. ${q.t === 'pg' ? 'Pilihan ganda' : 'Uraian'}</b><div style="flex:1"></div><button class="btn sm dg" onclick="SO.splice(${i},1);rSO()">✕</button></div><textarea rows="2" oninput="SO[${i}].q=this.value">${E(q.q)}</textarea>` + (q.t === 'pg' ? q.o.map((o, j) => `<div class="op"><input type="radio" name="k${i}" ${q.k === j ? 'checked' : ''} onchange="SO[${i}].k=${j}"><input value="${E(o)}" placeholder="Opsi ${'ABCD'[j]}" oninput="SO[${i}].o[${j}]=this.value"></div>`).join('') + '<small>Bulatan = kunci jawaban</small>' : `<small>Pedoman / kunci</small><textarea rows="2" oninput="SO[${i}].k=this.value">${E(q.k)}</textarea>`) + '</div>').join('') : '<div class="empty">Belum ada soal. Generate dengan AI atau tambah manual.</div>';
 }
-function genAI() { run(async () => { const r = await call('gen', { mapel: S.m.nama, kelas: S.m.kelas.split(',')[0], topik: FM.gt, pg: FM.gp, uraian: FM.gu }, 'AI sedang membuat soal… (±10–40 detik)'); SO = SO.concat(r); rSO(); toast(r.length + ' soal ditambahkan. Periksa dan edit bila perlu.'); $('#sl').scrollIntoView({ behavior: 'smooth' }); }); }
+function genAI() { run(async () => { const r = await call('gen', { mapel: S.m.nama, kelas: S.m.kelas.split(',')[0], topik: FM.gt, pg: FM.gp, uraian: FM.gu }, 'AI sedang membuat soal…'); SO = SO.concat(r); rSO(); toast(r.length + ' soal ditambahkan. Periksa dan edit bila perlu.'); $('#sl').scrollIntoView({ behavior: 'smooth' }); }); }
 function pubErr(m, el) { const e = document.getElementById('pe'); if (e) e.innerHTML = `<div class="note" style="background:var(--errbg);color:var(--err)">⚠ ${E(m)}</div>`; const t = el || e; if (t && t.scrollIntoView) t.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (el && el.focus) el.focus(); toast(m, 1); }
 async function savePost() {
   const t = NT, fl = FM.file, pe = document.getElementById('pe'); if (pe) pe.innerHTML = '';
