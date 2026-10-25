@@ -130,7 +130,7 @@ function mapelForm() {
     modal(head('Tambah Mapel') + `<label class="f">Nama mapel</label><input id="mn" placeholder="mis. IPA">` + (ad ? `<label class="f">Guru pengampu</label><select id="mg">${gl.map(x => `<option value="${x.id}">${E(x.nama)}</option>`).join('')}</select>` : '') + `<label class="f">Kelas (pilih satu atau lebih)</label><div class="chips">${k.map(x => `<label class="chip"><input type="checkbox" value="${E(x)}"><span>${E(x)}</span></label>`).join('')}</div><button class="btn pri blk" onclick="addMapel()">Simpan</button>`);
   });
 }
-function addMapel() { run(async () => { const kelas = [...document.querySelectorAll('.chip input:checked')].map(x => x.value); await call('mapelAdd', { nama: $('#mn').value, kelas, guru: $('#mg') ? $('#mg').value : '' }, 'Menyimpan…'); bust('ml'); closeM(); toast('Mapel disimpan'); V == 'admin' ? vAdmin() : vMapel(); }); }
+function addMapel() { run(async () => { const kelas = [...document.querySelectorAll('#md .chip input:checked')].map(x => x.value); await call('mapelAdd', { nama: $('#mn').value, kelas, guru: $('#mg') ? $('#mg').value : '' }, 'Menyimpan…'); bust('ml'); closeM(); toast('Mapel disimpan'); V == 'admin' ? vAdmin() : vMapel(); }); }
 function vM() {
   RT++; const m = S.m, g = S.me.role !== 'siswa', T = [['post', 'Materi & Tugas'], ['qa', 'Tanya Jawab']].concat(g ? [['new', 'Buat'], ['nilai', 'Nilai']] : []);
   $('#v').innerHTML = `<button class="btn sm" onclick="go('mapel')">← Mapel</button><div class="mrow" style="margin:12px 0">${av(m.nama)}<div><h2 style="margin:0">${E(m.nama)}</h2><small>Kelas ${E(m.kelas)} · ${E(m.gn)}</small></div></div><div class="seg">${T.map(t => `<button class="${MT == t[0] ? 'on' : ''}" onclick="MT='${t[0]}';vM()">${t[1]}</button>`).join('')}</div><div id="mc">${sk(2)}</div>`;
@@ -165,7 +165,7 @@ function putFile(url, f, mime) {
 function tPost() { run(async () => { const l = D.posts = await call('postList', { mapel: S.m.id }); $('#mc').innerHTML = l.length ? l.map(postCard).join('') : '<div class="empty">Belum ada postingan.</div>'; }); }
 function postCard(p) {
   const g = S.me.role !== 'siswa';
-  let h = `<div class="card"><span class="tag">${E(p.tipe)}${p.mode ? ' · ' + E(p.mode) : ''}</span> <b>${E(p.judul)}</b><br><small>${E(p.dibuat)}${p.soal.length ? ' · ' + p.soal.length + ' soal' : ''}</small>${p.isi ? `<div class="tx">${E(p.isi)}</div>` : ''}`;
+  let h = `<div class="card"><span class="tag">${E(p.tipe)}${p.mode ? ' · ' + E(p.mode) : ''}</span> <b>${E(p.judul)}</b><br><small>${E(p.dibuat)}${p.kelas ? ' · Kelas ' + E(p.kelas.split(',').join(', ')) : ''}${p.soal.length ? ' · ' + p.soal.length + ' soal' : ''}</small>${p.isi ? `<div class="tx">${E(p.isi)}</div>` : ''}`;
   if (p.link) { h += player(vurl(p.link)); h += `<p><a href="${E(p.link)}" target="_blank" rel="noopener">🔗 Buka tautan</a></p>`; }
   if (p.file) { const a = p.file.split('|'); if (VEXT.test(a[1] || '')) h += player({ k: 'dr', id: a[0] }); h += `<p><a href="${dl(E(a[0]))}" target="_blank" rel="noopener">📎 ${E(a[1])}</a></p>`; }
   if (g) h += '<div class="row">' + (p.soal.length ? `<button class="btn sm" onclick="cetak('${p.id}',0)">🖨 Soal</button><button class="btn sm" onclick="cetak('${p.id}',1)">🔑 Kunci</button>` : '') + (NL.includes(p.tipe) ? `<button class="btn sm" onclick="hasil('${p.id}')">📊 Hasil</button>` : '') + `<button class="btn sm" onclick="editPost('${p.id}')">✏️ Ubah</button><button class="btn sm dg" onclick="delPost('${p.id}')">Hapus</button></div><div id="h${p.id}"></div>`;
@@ -178,9 +178,9 @@ function postCard(p) {
 async function delPost(id) { if (await sure('Hapus postingan ini beserta pengumpulan dan filenya di Drive?', 'Hapus')) run(async () => { await call('postDel', { id }, 'Menghapus…'); tPost(); }); }
 function editPost(id) {
   const p = D.posts.find(x => x.id === id);
-  modal(head('Ubah postingan') + `<label class="f">Judul</label><input id="ej" value="${E(p.judul)}"><label class="f">Deskripsi / isi teks</label><textarea id="ei" rows="6">${E(p.isi)}</textarea><label class="f">Tautan</label><input id="el" type="url" value="${E(p.link)}"><p class="mu"><small>Soal dan file tidak diubah di sini. Untuk mengganti soal/file, buat postingan baru.</small></p><button class="btn pri blk" onclick="saveEdit('${id}')">Simpan</button>`);
+  modal(head('Ubah postingan') + `<label class="f">Judul</label><input id="ej" value="${E(p.judul)}"><label class="f">Deskripsi / isi teks</label><textarea id="ei" rows="6">${E(p.isi)}</textarea><label class="f">Tautan</label><input id="el" type="url" value="${E(p.link)}">${mapelKelas().length > 1 ? `<label class="f">Untuk kelas</label>${kelasChips(mapelKelas(), p.kelas ? p.kelas.split(',') : mapelKelas(), 0)}` : ''}<p class="mu"><small>Soal dan file tidak diubah di sini. Untuk mengganti soal/file, buat postingan baru.</small></p><button class="btn pri blk" onclick="saveEdit('${id}')">Simpan</button>`);
 }
-function saveEdit(id) { run(async () => { await call('postEdit', { id, judul: $('#ej').value, isi: $('#ei').value, link: $('#el').value.trim() }, 'Menyimpan…'); closeM(); toast('Postingan diperbarui'); tPost(); }); }
+function saveEdit(id) { run(async () => { await call('postEdit', { id, judul: $('#ej').value, isi: $('#ei').value, link: $('#el').value.trim(), kelas: mapelKelas().length > 1 ? [...document.querySelectorAll('#md .chip input:checked')].map(x => x.value) : undefined }, 'Menyimpan…'); closeM(); toast('Postingan diperbarui'); tPost(); }); }
 function hasil(id) {
   run(async () => {
     const l = await call('subs', { post: id }), po = D.posts.find(x => x.id === id);
@@ -229,10 +229,13 @@ function tQA() {
   run(async () => {
     const l = await call('qaList', { mapel: S.m.id }), g = S.me.role !== 'siswa';
     let h = g ? '' : '<div class="card"><textarea id="qt" rows="3" placeholder="Tulis pertanyaan untuk guru…"></textarea><button class="btn pri" onclick="ask()">Kirim pertanyaan</button></div>';
-    h += l.map(x => `<div class="card"><small>${E(x.nama)} · ${E(x.waktu)}</small><div class="tx">${E(x.tanya)}</div>${x.jawab ? `<div class="ans"><b>Jawaban guru</b><div class="tx">${E(x.jawab)}</div></div>` : g ? `<textarea id="j${x.id}" rows="2" placeholder="Tulis jawaban"></textarea><button class="btn pri sm" onclick="jwb('${x.id}')">Kirim jawaban</button>` : '<small>⏳ Menunggu jawaban…</small>'}</div>`).join('');
+    if (g && l.length) h += `<div class="row"><small class="mu">${l.length} pertanyaan</small><div class="sp" style="flex:1"></div><button class="btn sm dg" onclick="clearQA()">🗑 Hapus semua</button></div>`;
+    h += l.map(x => `<div class="card"><div class="row" style="margin:0"><small style="flex:1">${E(x.nama)} · ${E(x.waktu)}</small>${g ? `<button class="btn sm dg" onclick="delQA('${x.id}')">Hapus</button>` : ''}</div><div class="tx">${E(x.tanya)}</div>${x.jawab ? `<div class="ans"><b>Jawaban guru</b><div class="tx">${E(x.jawab)}</div></div>` : g ? `<textarea id="j${x.id}" rows="2" placeholder="Tulis jawaban"></textarea><button class="btn pri sm" onclick="jwb('${x.id}')">Kirim jawaban</button>` : '<small>⏳ Menunggu jawaban…</small>'}</div>`).join('');
     $('#mc').innerHTML = h || '<div class="empty">Belum ada pertanyaan.</div>';
   });
 }
+async function delQA(id) { if (await sure('Hapus pertanyaan ini beserta jawabannya?', 'Hapus')) run(async () => { await call('qaDel', { id }, 'Menghapus…'); toast('Dihapus'); tQA(); }); }
+async function clearQA() { if (await sure('Hapus SEMUA tanya jawab di mapel ' + S.m.nama + '? Tindakan ini tidak bisa dibatalkan.', 'Hapus semua')) run(async () => { const n = await call('qaClear', { mapel: S.m.id }, 'Menghapus…'); toast(n + ' pertanyaan dihapus'); tQA(); }); }
 function ask() { run(async () => { await call('tanya', { mapel: S.m.id, t: $('#qt').value }, 'Mengirim…'); toast('Terkirim'); tQA(); }); }
 function jwb(id) { run(async () => { await call('jawab', { id, t: $('#j' + id).value }, 'Mengirim…'); tQA(); }); }
 function tNilai() {
@@ -249,11 +252,15 @@ function csvRekap() {
 }
 
 /* ---------- buat postingan + soal ---------- */
+const mapelKelas = () => String(S.m.kelas || '').split(',').map(x => x.trim()).filter(Boolean);
+function togK(el) { FM.kc = el.checked ? [...new Set((FM.kc || []).concat(el.value))] : (FM.kc || []).filter(x => x !== el.value); }
+function kelasChips(ks, sel, cb) { return `<div class="chips">${ks.map(x => `<label class="chip"><input type="checkbox" value="${E(x)}" ${sel.includes(x) ? 'checked' : ''} ${cb ? 'onchange="togK(this)"' : ''}><span>${E(x)}</span></label>`).join('')}</div>`; }
 function tNew(t0, keep) {
-  if (!keep) { SO = []; FM = { j: '', i: '', l: '', mo: 'individu', file: null, video: null, gt: '', gp: '5', gu: '2' }; }
+  if (!keep) { SO = []; FM = { j: '', i: '', l: '', mo: 'individu', file: null, video: null, gt: '', gp: '5', gu: '2', kc: mapelKelas() }; }
   NT = NL.concat(['materi', 'pengumuman']).includes(t0) ? t0 : 'materi';
   const T = [['materi', 'Materi'], ['tugas', 'Tugas'], ['kuis', 'Kuis'], ['lkpd', 'LKPD'], ['pengumuman', 'Pengumuman']];
   $('#mc').innerHTML = `<div class="card"><label class="f">Jenis postingan</label><div class="seg" id="ptt">${T.map(t => `<button data-t="${t[0]}" class="${t[0] === NT ? 'on' : ''}" onclick="setT('${t[0]}')">${t[1]}</button>`).join('')}</div>
+${mapelKelas().length > 1 ? `<label class="f">Untuk kelas (hanya kelas yang dipilih yang bisa membuka)</label>${kelasChips(mapelKelas(), FM.kc || [], 1)}` : ''}
 <div id="pm"><label class="f">LKPD dikerjakan secara</label><select id="pmo" onchange="FM.mo=this.value"><option value="individu">Individu</option><option value="kelompok">Kelompok</option></select></div>
 <label class="f">Judul</label><input id="pj" value="${E(FM.j)}" oninput="FM.j=this.value"><label class="f">Deskripsi / isi teks</label><textarea id="pi" rows="5" oninput="FM.i=this.value">${E(FM.i)}</textarea>
 <label class="f">Tautan video / sumber (opsional): YouTube, Google Drive, atau .mp4 akan diputar langsung di web</label><input id="pl" type="url" placeholder="https://" value="${E(FM.l)}" oninput="FM.l=this.value"><label class="f">Unggah PDF / foto / dokumen (maks 8 MB; foto otomatis dikecilkan)</label><input id="pf" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,image/*" onchange="FM.file=this.files[0]||null">
@@ -282,6 +289,7 @@ async function savePost() {
     if (t === 'kuis' && !SO.length) return pubErr('Kuis belum punya soal. Generate dengan AI atau tambah manual.');
     const bad = SO.findIndex(q => !q.q.trim() || (q.t === 'pg' && q.o.some(o => !o.trim()))); if (bad >= 0) return pubErr('Soal nomor ' + (bad + 1) + ' masih ada bagian yang kosong (pertanyaan atau opsi).');
   }
+  if (!(FM.kc || []).length) return pubErr('Pilih minimal satu kelas tujuan postingan.');
   const vf = (t === 'materi' || t === 'lkpd') ? FM.video : null;
   if (fl && fl.size > 3e7) return pubErr('File terlalu besar. Untuk video gunakan kolom unggah video.');
   if (vf && fl) return pubErr('Pilih salah satu: file PDF/foto atau video.');
@@ -296,7 +304,7 @@ async function savePost() {
       busy('Mengunggah video… 0%'); try { await putFile(ini.url, vf, mime); } finally { busy(0); }
       await call('vidDone', { id: ini.id }, 'Menyelesaikan…'); vfile = { id: ini.id, name: ini.name };
     }
-    await call('postAdd', { vfile, mapel: S.m.id, tipe: t, judul: FM.j.trim(), isi: FM.i, link: FM.l.trim(), mode: t === 'lkpd' ? FM.mo : '', soal: JSON.stringify(NL.includes(t) ? SO : []), file }, 'Menyimpan postingan…');
+    await call('postAdd', { vfile, mapel: S.m.id, tipe: t, judul: FM.j.trim(), isi: FM.i, link: FM.l.trim(), mode: t === 'lkpd' ? FM.mo : '', kelas: FM.kc, soal: JSON.stringify(NL.includes(t) ? SO : []), file }, 'Menyimpan postingan…');
     toast('✔ Berhasil dipublikasikan'); MT = 'post'; vM();
   } catch (e) { b.disabled = false; pubErr(e.message || String(e)); }
 }
@@ -376,7 +384,18 @@ function aCfg() {
     $('#ac').innerHTML = `<div class="card"><b>Identitas sekolah</b><label class="f" style="margin-top:8px">Nama sekolah (tampil di bagian atas)</label><input id="cs" value="${E(c.sekolah)}"><button class="btn pri" onclick="saveCfg('sekolah')">Simpan</button></div>
 <div class="card"><b>Folder Buku Paket (Google Drive)</b><p class="mu" style="margin:2px 0 8px">Tempel tautan folder. Bagikan folder sebagai "Siapa saja yang memiliki link: Pelihat" agar siswa bisa membuka bukunya.</p><input id="cb" type="url" placeholder="https://drive.google.com/drive/folders/…" value="${c.buku ? 'https://drive.google.com/drive/folders/' + E(c.buku) : ''}"><button class="btn pri" onclick="saveCfg('buku')">Simpan</button></div>
 <div class="card"><b>API key Gemini bersama</b><p class="mu" style="margin:2px 0 8px">Dipakai semua guru yang belum mengisi key sendiri. ${c.hasGlobalKey ? '<span class="ok">Sudah tersimpan</span> (isi lagi untuk mengganti).' : 'Belum diisi.'}</p><input id="cg" type="password" autocomplete="off" placeholder="API key"><div class="row"><button class="btn pri" onclick="saveCfg('gkey')">Simpan</button>${c.hasGlobalKey ? '<button class="btn dg" onclick="saveCfg(\'gclear\')">Hapus key</button>' : ''}</div></div>
-<div class="card"><b>Penyimpanan file di Google Drive</b><p class="mu" style="margin:2px 0 8px">Semua file aplikasi berada di akun Google pemilik script:</p><a class="fl" href="${E(c.root)}" target="_blank" rel="noopener">📁 Folder utama</a><a class="fl" href="${E(c.up)}" target="_blank" rel="noopener">📎 Lampiran materi</a><a class="fl" href="${E(c.vid)}" target="_blank" rel="noopener">🎬 Video</a><a class="fl" href="${E(c.sub)}" target="_blank" rel="noopener">📝 Pengumpulan siswa</a></div>`;
+<div class="card"><b>Folder penyimpanan file (Google Drive)</b><p class="mu" style="margin:2px 0 8px">Secara bawaan aplikasi membuat folder otomatis di akun pemilik script. Untuk memakai folder sendiri, tempel tautan/ID folder di bawah. Folder harus dibagikan ke <b>${E(c.akun || 'akun pemilik script')}</b> dengan akses <b>Editor</b>. Kolom yang tidak diubah dibiarkan.</p>
+<label class="f">📎 Lampiran materi</label><input id="fu1" value="${E(c.up)}"><label class="f">🎬 Video</label><input id="fu2" value="${E(c.vid)}"><label class="f">📝 Pengumpulan siswa</label><input id="fu3" value="${E(c.sub)}">
+<button class="btn pri" onclick="saveFolders()">Simpan folder</button><p class="mu" style="margin:10px 0 4px"><small>File yang sudah terlanjur diunggah tetap bisa dibuka. Hanya unggahan berikutnya yang masuk ke folder baru.</small></p><a class="fl" href="${E(c.root)}" target="_blank" rel="noopener">📁 Folder utama</a><a class="fl" href="${E(c.up)}" target="_blank" rel="noopener">📎 Buka lampiran</a><a class="fl" href="${E(c.vid)}" target="_blank" rel="noopener">🎬 Buka video</a><a class="fl" href="${E(c.sub)}" target="_blank" rel="noopener">📝 Buka pengumpulan</a></div>`;
+    D.cfg = c;
+  });
+}
+function saveFolders() {
+  run(async () => {
+    const c = D.cfg, p = {}, v = [$('#fu1').value.trim(), $('#fu2').value.trim(), $('#fu3').value.trim()], id = [c.upId, c.vidId, c.subId];
+    ['fup', 'fvid', 'fsub'].forEach((k, i) => { if (v[i] && v[i].indexOf(id[i]) < 0) p[k] = v[i]; });
+    if (!Object.keys(p).length) return toast('Tidak ada folder yang diubah');
+    await call('cfgSet', p, 'Memeriksa akses folder…'); toast('Folder disimpan'); aCfg();
   });
 }
 function saveCfg(k) {
