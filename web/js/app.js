@@ -89,7 +89,7 @@ async function init() {
 function render() { S.me ? main() : loginView(); }
 function loginView() {
   LT = 1;
-  $('#app').innerHTML = `<div class="login"><div class="card"><div style="text-align:center"><div class="mark" style="margin:auto;width:48px;height:48px;font-size:24px">🎓</div><h1>Kelas Pintar</h1><p class="mu" style="margin:0 0 14px">Ruang belajar sekolah kita</p></div>
+  $('#app').innerHTML = `<div class="login"><div class="card"><div style="text-align:center"><div class="mark" style="margin:auto;width:48px;height:48px;font-size:24px">🎓</div><h1>Kelas Online YPP</h1><p class="mu" style="margin:0 0 14px">Ruang belajar sekolah kita</p></div>
 <div class="seg"><button id="t1" class="on" onclick="lt(1)">Siswa</button><button id="t2" onclick="lt(2)">Guru / Admin</button></div>
 <div id="f1"><label class="f">NISN</label><input id="nisn" inputmode="numeric" autocomplete="off"><label class="f">Tanggal lahir</label><input id="lhr" type="date"></div>
 <div id="f2" hidden><label class="f">Username</label><input id="usr" autocapitalize="none" autocomplete="username"><label class="f">Password</label><input id="pw" type="password" autocomplete="current-password"></div>
