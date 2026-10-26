@@ -4,7 +4,7 @@ const API = (window.KP_CONFIG || {}).API || '';
 const $ = s => document.querySelector(s);
 const E = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ST = { get() { try { return localStorage.getItem('kp2') || ''; } catch (e) { return ''; } }, set(v) { try { v ? localStorage.setItem('kp2', v) : localStorage.removeItem('kp2'); } catch (e) {} } };
-const READ = new Set(['feed', 'stat', 'postList', 'qaList', 'rekap', 'mapelList', 'kelasList', 'kelasInfo', 'users', 'guruList', 'buku', 'bukuFresh', 'cfgGet', 'me', 'subs']);
+const READ = new Set(['feed', 'stat', 'postList', 'qaList', 'rekap', 'mapelList', 'kelasList', 'kelasInfo', 'users', 'guruList', 'buku', 'bukuFresh', 'cfgGet', 'me', 'subs', 'subsHtml', 'htmlGet']);
 const NL = ['kuis', 'tugas', 'lkpd'], COL = ['#0f766e', '#2563eb', '#9333ea', '#c2410c', '#be123c', '#4d7c0f', '#0e7490'];
 const VEXT = /\.(mp4|webm|mov|m4v|mkv|avi|3gp|ogv)$/i;
 let S = { tok: ST.get(), me: null, m: null }, D = {}, V = 'home', MT = 'post', LT = 1, SO = [], W = null, AT = 'kelas', NT = 'materi', FM = {}, RT = 0, nreq = 0;
@@ -178,21 +178,23 @@ function postCard(p) {
   const g = S.me.role !== 'siswa';
   let h = `<div class="card"><span class="tag">${E(p.tipe)}${p.mode ? ' · ' + E(p.mode) : ''}</span> <b>${E(p.judul)}</b><br><small>${E(p.dibuat)}${p.kelas ? ' · Kelas ' + E(p.kelas.split(',').join(', ')) : ''}${p.soal.length ? ' · ' + p.soal.length + ' soal' : ''}</small>${p.isi ? `<div class="tx">${E(p.isi)}</div>` : ''}`;
   if (p.link) { h += player(vurl(p.link)); h += `<p><a href="${E(p.link)}" target="_blank" rel="noopener">🔗 Buka tautan</a></p>`; }
-  if (p.file) { const a = p.file.split('|'); if (VEXT.test(a[1] || '')) h += player({ k: 'dr', id: a[0] }); h += `<p><a href="${dl(E(a[0]))}" target="_blank" rel="noopener">📎 ${E(a[1])}</a></p>`; }
-  if (g) h += '<div class="row">' + (p.soal.length ? `<button class="btn sm" onclick="cetak('${p.id}',0)">🖨 Soal</button><button class="btn sm" onclick="cetak('${p.id}',1)">🔑 Kunci</button>` : '') + (NL.includes(p.tipe) ? `<button class="btn sm" onclick="hasil('${p.id}')">📊 Hasil</button>` : '') + `<button class="btn sm" onclick="editPost('${p.id}')">✏️ Ubah</button><button class="btn sm dg" onclick="delPost('${p.id}')">Hapus</button></div><div id="h${p.id}"></div>`;
+  if (p.fmt === 'html') h += htmlBox(p, g);
+  else if (p.file) { const a = p.file.split('|'); if (VEXT.test(a[1] || '')) h += player({ k: 'dr', id: a[0] }); h += `<p><a href="${dl(E(a[0]))}" target="_blank" rel="noopener">📎 ${E(a[1])}</a></p>`; }
+  if (g) h += '<div class="row">' + (p.soal.length ? `<button class="btn sm" onclick="cetak('${p.id}',0)">🖨 Soal</button><button class="btn sm" onclick="cetak('${p.id}',1)">🔑 Kunci</button>` : '') + (NL.includes(p.tipe) ? `<button class="btn sm" onclick="hasil('${p.id}')">${p.fmt === 'html' ? '📊 Nilai' : '📊 Hasil'}</button>` : '') + `<button class="btn sm" onclick="editPost('${p.id}')">✏️ Ubah</button><button class="btn sm dg" onclick="delPost('${p.id}')">Hapus</button></div><div id="h${p.id}"></div>`;
   else if (NL.includes(p.tipe)) {
-    if (p.mine) h += `<p class="ok">✔ Sudah dikirim${p.mine.nilai ? ' · Nilai <b>' + E(p.mine.nilai) + '</b>' : ' · menunggu penilaian guru'}</p>`;
-    if (!(p.mine && p.tipe === 'kuis')) h += `<button class="btn pri" onclick="mulai('${p.id}')">${p.mine ? 'Kirim ulang' : p.tipe === 'kuis' ? '▶ Mulai kuis' : '✏️ Kerjakan'}</button>`;
+    if (p.mine) h += `<p class="ok">✔ Sudah dikirim${p.mine.nilai ? ' · Nilai <b>' + E(p.mine.nilai) + '</b>' : ' · menunggu penilaian guru'}</p>` + (p.mine.catatan ? `<div class="ans"><b>Catatan guru</b><div class="tx">${E(p.mine.catatan)}</div></div>` : '');
+    if (p.fmt !== 'html' && !(p.mine && p.tipe === 'kuis')) h += `<button class="btn pri" onclick="mulai('${p.id}')">${p.mine ? 'Kirim ulang' : p.tipe === 'kuis' ? '▶ Mulai kuis' : '✏️ Kerjakan'}</button>`;
   }
   return h + '</div>';
 }
 async function delPost(id) { if (await sure('Hapus postingan ini beserta pengumpulan dan filenya di Drive?', 'Hapus')) run(async () => { await call('postDel', { id }, 'Menghapus…'); tPost(); }); }
 function editPost(id) {
   const p = D.posts.find(x => x.id === id);
-  modal(head('Ubah postingan') + `<label class="f">Judul</label><input id="ej" value="${E(p.judul)}"><label class="f">Deskripsi / isi teks</label><textarea id="ei" rows="6">${E(p.isi)}</textarea><label class="f">Tautan</label><input id="el" type="url" value="${E(p.link)}">${mapelKelas().length > 1 ? `<label class="f">Untuk kelas</label>${kelasChips(mapelKelas(), p.kelas ? p.kelas.split(',') : mapelKelas(), 0)}` : ''}<p class="mu"><small>Soal dan file tidak diubah di sini. Untuk mengganti soal/file, buat postingan baru.</small></p><button class="btn pri blk" onclick="saveEdit('${id}')">Simpan</button>`);
+  modal(head('Ubah postingan') + `<label class="f">Judul</label><input id="ej" value="${E(p.judul)}"><label class="f">Deskripsi / isi teks</label><textarea id="ei" rows="6">${E(p.isi)}</textarea><label class="f">Tautan</label><input id="el" type="url" value="${E(p.link)}">${mapelKelas().length > 1 ? `<label class="f">Untuk kelas</label>${kelasChips(mapelKelas(), p.kelas ? p.kelas.split(',') : mapelKelas(), 0)}` : ''}${p.fmt === 'html' ? `<label class="f">Ganti file HTML (opsional, maks 8 MB). Pekerjaan siswa yang sudah terkirim tidak berubah.</label><input id="eh" type="file" accept=".html,.htm,text/html">` : ''}<p class="mu"><small>${p.fmt === 'html' ? 'Hanya file HTML yang bisa diganti di sini. Untuk jenis file lain, buat postingan baru.' : 'Soal dan file tidak diubah di sini. Untuk mengganti soal/file, buat postingan baru.'}</small></p><button class="btn pri blk" onclick="saveEdit('${id}')">Simpan</button>`);
 }
-function saveEdit(id) { run(async () => { await call('postEdit', { id, judul: $('#ej').value, isi: $('#ei').value, link: $('#el').value.trim(), kelas: mapelKelas().length > 1 ? [...document.querySelectorAll('#md .chip input:checked')].map(x => x.value) : undefined }, 'Menyimpan…'); closeM(); toast('Postingan diperbarui'); tPost(); }); }
+function saveEdit(id) { run(async () => { const hf = $('#eh') && $('#eh').files[0] ? chkHtml($('#eh').files[0]) : null, html = hf ? { name: hf.name, mime: 'text/html', b64: await fileB64(hf) } : undefined; await call('postEdit', { id, judul: $('#ej').value, isi: $('#ei').value, link: $('#el').value.trim(), html, kelas: mapelKelas().length > 1 ? [...document.querySelectorAll('#md .chip input:checked')].map(x => x.value) : undefined }, 'Menyimpan…'); bust('h_' + id); closeM(); toast('Postingan diperbarui'); tPost(); }); }
 function hasil(id) {
+  const po0 = (D.posts || []).find(x => x.id === id); if (po0 && po0.fmt === 'html') return gradeHtml(id);
   run(async () => {
     const l = await call('subs', { post: id }), po = D.posts.find(x => x.id === id);
     $('#h' + id).innerHTML = l.length ? l.map(s => {
@@ -292,7 +294,7 @@ const mapelKelas = () => String(S.m.kelas || '').split(',').map(x => x.trim()).f
 function togK(el) { FM.kc = el.checked ? [...new Set((FM.kc || []).concat(el.value))] : (FM.kc || []).filter(x => x !== el.value); }
 function kelasChips(ks, sel, cb) { return `<div class="chips">${ks.map(x => `<label class="chip"><input type="checkbox" value="${E(x)}" ${sel.includes(x) ? 'checked' : ''} ${cb ? 'onchange="togK(this)"' : ''}><span>${E(x)}</span></label>`).join('')}</div>`; }
 function tNew(t0, keep) {
-  if (!keep) { SO = []; FM = { j: '', i: '', l: '', mo: 'individu', file: null, video: null, gt: '', gp: '5', gu: '2', kc: mapelKelas() }; }
+  if (!keep) { SO = []; FM = { j: '', i: '', l: '', mo: 'individu', file: null, video: null, html: null, gt: '', gp: '5', gu: '2', kc: mapelKelas() }; }
   NT = NL.concat(['materi', 'pengumuman']).includes(t0) ? t0 : 'materi';
   const T = [['materi', 'Materi'], ['tugas', 'Tugas'], ['kuis', 'Kuis'], ['lkpd', 'LKPD'], ['pengumuman', 'Pengumuman']];
   $('#mc').innerHTML = `<div class="card"><label class="f">Jenis postingan</label><div class="seg" id="ptt">${T.map(t => `<button data-t="${t[0]}" class="${t[0] === NT ? 'on' : ''}" onclick="setT('${t[0]}')">${t[1]}</button>`).join('')}</div>
@@ -300,16 +302,17 @@ ${mapelKelas().length > 1 ? `<label class="f">Untuk kelas (hanya kelas yang dipi
 <div id="pm"><label class="f">LKPD dikerjakan secara</label><select id="pmo" onchange="FM.mo=this.value"><option value="individu">Individu</option><option value="kelompok">Kelompok</option></select></div>
 <label class="f">Judul</label><input id="pj" value="${E(FM.j)}" oninput="FM.j=this.value"><label class="f">Deskripsi / isi teks</label><textarea id="pi" rows="5" oninput="FM.i=this.value">${E(FM.i)}</textarea>
 <label class="f">Tautan video / sumber (opsional): YouTube, Google Drive, atau .mp4 akan diputar langsung di web</label><input id="pl" type="url" placeholder="https://" value="${E(FM.l)}" oninput="FM.l=this.value"><label class="f">Unggah PDF / foto / dokumen (maks 8 MB; foto otomatis dikecilkan)</label><input id="pf" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,image/*" onchange="FM.file=this.files[0]||null">
-<div id="pv"><label class="f">Atau unggah video dari perangkat (tersimpan di Google Drive, maks 500 MB)</label><input id="pvf" type="file" accept="video/*" onchange="FM.video=this.files[0]||null"></div></div>
+<div id="pv"><label class="f">Atau unggah video dari perangkat (tersimpan di Google Drive, maks 500 MB)</label><input id="pvf" type="file" accept="video/*" onchange="FM.video=this.files[0]||null"></div>
+<div id="ph"><label class="f">🌐 Atau unggah file HTML interaktif (maks 8 MB). Siswa membukanya langsung di aplikasi (bisa halaman penuh), mengerjakannya, lalu menyimpan sebagai Nama_Materi.html</label><input id="phf" type="file" accept=".html,.htm,text/html" onchange="pickHtml(this)"><div class="row" style="margin-top:0"><button class="btn sm" onclick="prevHtml()">👁 Pratinjau file</button><small id="phn" class="mu"></small></div></div></div>
 <div id="ps"><div class="card"><b>✨ Buat soal dengan AI</b><p class="mu" style="margin:2px 0 8px">Butuh API key Gemini di menu Akun.</p><label class="f">Topik / tujuan pembelajaran</label><input id="gt" value="${E(FM.gt)}" oninput="FM.gt=this.value"><div class="row"><div class="f"><label class="f">Jumlah PG</label><input id="gp" type="number" value="${E(FM.gp)}" min="0" max="20" oninput="FM.gp=this.value"></div><div class="f"><label class="f">Jumlah uraian</label><input id="gu" type="number" value="${E(FM.gu)}" min="0" max="10" oninput="FM.gu=this.value"></div></div><button class="btn pri" onclick="genAI()">Generate soal</button></div>
 <h3>Daftar soal <span id="sc" class="mu"></span></h3><div id="sl"></div><div class="row"><button class="btn" onclick="addQ('pg')">＋ Pilihan ganda</button><button class="btn" onclick="addQ('uraian')">＋ Uraian</button></div></div>
 <div id="pe"></div><button id="pb" class="btn pri blk" onclick="savePost()">Publikasikan</button>`;
-  const g = id => document.getElementById(id); g('pm').hidden = NT !== 'lkpd'; g('ps').hidden = !NL.includes(NT); g('pv').hidden = !(NT === 'materi' || NT === 'lkpd'); g('pmo').value = FM.mo; rSO();
+  const g = id => document.getElementById(id); g('pm').hidden = NT !== 'lkpd'; g('ps').hidden = !NL.includes(NT); g('pv').hidden = !(NT === 'materi' || NT === 'lkpd'); g('ph').hidden = !['materi', 'tugas', 'lkpd'].includes(NT); g('pmo').value = FM.mo; rSO(); syncSoal();
 }
 function setT(t) {
   NT = t; document.querySelectorAll('#ptt button').forEach(x => x.classList.toggle('on', x.dataset.t === t));
   const a = document.getElementById('pm'), b = document.getElementById('ps'); if (!a || !b) { tNew(t, 1); return; }
-  a.hidden = t !== 'lkpd'; b.hidden = !NL.includes(t); const c = document.getElementById('pv'); if (c) c.hidden = !(t === 'materi' || t === 'lkpd');
+  a.hidden = t !== 'lkpd'; b.hidden = !NL.includes(t); const c = document.getElementById('pv'); if (c) c.hidden = !(t === 'materi' || t === 'lkpd'); const ph = document.getElementById('ph'); if (ph) ph.hidden = !['materi', 'tugas', 'lkpd'].includes(t); syncSoal();
 }
 function addQ(t) { SO.push(t === 'pg' ? { t: 'pg', q: '', o: ['', '', '', ''], k: 0 } : { t: 'uraian', q: '', k: '' }); rSO(); }
 function rSO() {
@@ -321,7 +324,9 @@ function pubErr(m, el) { const e = document.getElementById('pe'); if (e) e.inner
 async function savePost() {
   const t = NT, fl = FM.file, pe = document.getElementById('pe'); if (pe) pe.innerHTML = '';
   if (!String(FM.j || '').trim()) return pubErr('Judul wajib diisi. Kolom Judul ada di bagian paling atas halaman ini.', document.getElementById('pj'));
-  if (NL.includes(t)) {
+  const hf = ['materi', 'tugas', 'lkpd'].includes(t) ? FM.html : null;
+  if (hf) { try { chkHtml(hf); } catch (e) { return pubErr(e.message); } if (fl || FM.video) return pubErr('Pilih salah satu: file HTML, PDF/foto, atau video.'); }
+  if (NL.includes(t) && !hf) {
     if (t === 'kuis' && !SO.length) return pubErr('Kuis belum punya soal. Generate dengan AI atau tambah manual.');
     const bad = SO.findIndex(q => !q.q.trim() || (q.t === 'pg' && q.o.some(o => !o.trim()))); if (bad >= 0) return pubErr('Soal nomor ' + (bad + 1) + ' masih ada bagian yang kosong (pertanyaan atau opsi).');
   }
@@ -334,13 +339,15 @@ async function savePost() {
   const b = document.getElementById('pb'); b.disabled = true;
   try {
     let vfile = null, file = null;
+    let html = null;
     if (fl) { busy('Menyiapkan file…'); try { file = await prep(fl); } finally { busy(0); } }
+    if (hf) { busy('Menyiapkan file…'); try { html = { name: hf.name, mime: 'text/html', b64: await fileB64(hf) }; } finally { busy(0); } }
     if (vf) {
       const mime = vf.type || 'video/mp4', ini = await call('vidInit', { mapel: S.m.id, name: vf.name, mime, size: vf.size, origin: location.origin }, 'Menyiapkan unggahan…');
       busy('Mengunggah video… 0%'); try { await putFile(ini.url, vf, mime); } finally { busy(0); }
       await call('vidDone', { id: ini.id }, 'Menyelesaikan…'); vfile = { id: ini.id, name: ini.name };
     }
-    await call('postAdd', { vfile, mapel: S.m.id, tipe: t, judul: FM.j.trim(), isi: FM.i, link: FM.l.trim(), mode: t === 'lkpd' ? FM.mo : '', kelas: FM.kc, soal: JSON.stringify(NL.includes(t) ? SO : []), file }, 'Menyimpan postingan…');
+    await call('postAdd', { vfile, mapel: S.m.id, tipe: t, judul: FM.j.trim(), isi: FM.i, link: FM.l.trim(), mode: t === 'lkpd' ? FM.mo : '', kelas: FM.kc, soal: JSON.stringify(NL.includes(t) && !hf ? SO : []), file, html }, 'Menyimpan postingan…');
     toast('✔ Berhasil dipublikasikan'); MT = 'post'; vM();
   } catch (e) { b.disabled = false; pubErr(e.message || String(e)); }
 }
@@ -463,4 +470,325 @@ function vAkun() {
 }
 function saveK() { run(async () => { await call('saveKey', { key: $('#ak').value.trim(), model: $('#am').value }, 'Menyimpan…'); S.me = await call('me'); toast('Tersimpan'); vAkun(); }); }
 function chPw() { run(async () => { await call('pass', { old: $('#op').value, pass: $('#np').value }, 'Menyimpan…'); $('#op').value = ''; $('#np').value = ''; toast('Password diganti'); }); }
+/* =====================================================================
+   FILE HTML INTERAKTIF (materi / tugas / LKPD)
+   - Guru mengunggah .html -> siswa membukanya di dalam aplikasi (iframe ber-sandbox, bisa halaman penuh)
+   - Siswa mengerjakan -> "Simpan" (unduh Nama_Materi.html) / "Kirim ke guru" (tersimpan di Drive dengan nama yang sama)
+   - Guru menilai lewat layar penilaian (daftar siswa + tampilan file + nilai & catatan)
+   Keamanan: iframe TANPA allow-same-origin => skrip di dalam file tidak bisa membaca token login/penyimpanan aplikasi.
+   Pekerjaan siswa yang dibuka guru ditampilkan statis (tanpa skrip sama sekali).
+   ===================================================================== */
+const HSAND = 'allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads';
+const CSP_LIVE = "default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; font-src data: https://fonts.gstatic.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; img-src data: blob: https:; media-src data: blob: https:; frame-src https://www.youtube-nocookie.com https://www.youtube.com https://drive.google.com; connect-src 'none'; form-action 'none'";
+const CSP_VIEW = "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src data: https://fonts.gstatic.com; img-src data: blob: https:; media-src data: https:";
+
+function hname(nama, judul) { // Nama_Materi.html (harus sama dengan hname_() di Code.gs)
+  const sl = (s, n) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, n).replace(/_+$/, '');
+  return (sl(nama, 40) || 'Siswa') + '_' + (sl(judul, 60) || 'Materi') + '.html';
+}
+function chkHtml(f) {
+  if (!f) throw new Error('Pilih file HTML dulu');
+  if (!/\.html?$/i.test(f.name)) throw new Error('File harus berekstensi .html atau .htm');
+  if (f.size > 8e6) throw new Error('File HTML terlalu besar (' + (f.size / 1e6).toFixed(1) + ' MB, maks 8 MB). Kecilkan gambar di dalamnya.');
+  return f;
+}
+
+/* Ringkasan isian sebuah dokumen (dipakai di dalam file siswa DAN di sisi guru lewat DOMParser). Berdiri sendiri: tidak boleh memakai variabel luar. */
+function kpStats(d) {
+  var o = { q: { t: 0, d: 0, r: 0 }, f: { t: 0, f: 0 }, c: { t: 0, c: 0 } }, i, n, x;
+  n = d.querySelectorAll('.mx-quiz');
+  for (i = 0; i < n.length; i++) { o.q.t++; if (n[i].getAttribute('data-done')) { o.q.d++; if (!n[i].querySelector('.mx-opts button.no')) o.q.r++; } }
+  n = d.querySelectorAll('textarea, input[type=text], input[type=number], input[type=search], input[type=email], input[type=url], input:not([type])');
+  for (i = 0; i < n.length; i++) { x = n[i]; if (x.type === 'hidden') continue; o.f.t++; if (String(x.value || '').replace(/\s+/g, '') !== '') o.f.f++; }
+  n = d.querySelectorAll('input[type=checkbox]');
+  for (i = 0; i < n.length; i++) { o.c.t++; if (n[i].checked) o.c.c++; }
+  return o;
+}
+
+/* Skrip jembatan: disuntikkan ke dalam file saat dibuka untuk dikerjakan. Berdiri sendiri (di-stringify). */
+function kpBridge() {
+  var P = window.parent, lt = 0;
+  function send(m) { try { P.postMessage(m, '*'); } catch (e) { } }
+  function mark() { var n = Date.now(); if (n - lt > 800) { lt = n; send({ kp: 'dirty' }); } }
+  function grow(t) { // kotak jawaban ikut memanjang saat teks bertambah
+    var b = t.parentNode; if (!b) return;
+    var h0 = +b.getAttribute('data-kp-h') || 0;
+    t.style.height = '0px'; var need = t.scrollHeight + 4; t.style.height = '';
+    b.style.height = Math.max(h0, need) + 'px';
+  }
+  function enhance() { // garis jawaban (.mx-lines) di file cetak dijadikan kolom ketik
+    var L = document.querySelectorAll('.mx-lines'), i, t;
+    if (L.length && !document.getElementById('kp-style')) {
+      var st = document.createElement('style'); st.id = 'kp-style';
+      st.textContent = '.mx-lines>textarea.kp-ta{position:absolute;left:0;top:0;width:100%;height:100%;box-sizing:border-box;margin:0;padding:0 10px;border:0;outline:0;background:transparent;resize:none;overflow:hidden;font:inherit;font-size:11pt;line-height:8mm;color:#1f2a44;border-radius:12px}.mx-lines>textarea.kp-ta:focus{background:rgba(255,249,227,.5)}';
+      (document.head || document.documentElement).appendChild(st);
+    }
+    for (i = 0; i < L.length; i++) {
+      t = L[i].querySelector('textarea.kp-ta');
+      if (!t) {
+        L[i].setAttribute('data-kp-h', Math.round(L[i].getBoundingClientRect().height));
+        t = document.createElement('textarea'); t.className = 'kp-ta'; t.setAttribute('placeholder', 'Ketik jawabanmu di sini…'); t.setAttribute('aria-label', 'Jawaban');
+        L[i].appendChild(t);
+      }
+      grow(t);
+    }
+  }
+  function small(img, s) { // foto besar dikecilkan agar file tidak melebihi batas
+    return new Promise(function (ok) {
+      var im = new Image();
+      im.onload = function () {
+        try {
+          var k = Math.min(1, 1280 / Math.max(im.naturalWidth, im.naturalHeight)), c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(im.naturalWidth * k)); c.height = Math.max(1, Math.round(im.naturalHeight * k));
+          var x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(im, 0, 0, c.width, c.height);
+          var o = c.toDataURL('image/jpeg', .8); if (o.length < s.length) img.setAttribute('src', o);
+        } catch (e) { }
+        ok();
+      };
+      im.onerror = function () { ok(); };
+      im.src = s;
+    });
+  }
+  function snap() { // salinan seluruh dokumen beserta isian siswa
+    var live = document.documentElement, clone = live.cloneNode(true), i, j, a, b;
+    var A = live.querySelectorAll('input,textarea,select'), B = clone.querySelectorAll('input,textarea,select');
+    for (i = 0; i < A.length; i++) {
+      a = A[i]; b = B[i]; if (!b) continue;
+      if (a.tagName === 'TEXTAREA') b.textContent = (a.value.charAt(0) === '\n' ? '\n' : '') + a.value;
+      else if (a.tagName === 'SELECT') { for (j = 0; j < a.options.length; j++) { if (a.options[j].selected) b.options[j].setAttribute('selected', ''); else b.options[j].removeAttribute('selected'); } }
+      else if (a.type === 'checkbox' || a.type === 'radio') { if (a.checked) b.setAttribute('checked', ''); else b.removeAttribute('checked'); }
+      else if (a.type !== 'file' && a.type !== 'password') b.setAttribute('value', a.value);
+    }
+    ['kp-bridge', 'kp-csp', 'kp-base'].forEach(function (id) { var e = clone.querySelector('#' + id); if (e && e.parentNode) e.parentNode.removeChild(e); });
+    var jobs = [], imgs = clone.querySelectorAll('img');
+    for (i = 0; i < imgs.length; i++) { var s = imgs[i].getAttribute('src') || ''; if (/^data:image\/(png|jpe?g|webp|bmp)/i.test(s) && s.length > 350000) jobs.push(small(imgs[i], s)); }
+    return Promise.all(jobs).then(function () { return { html: '<!DOCTYPE html>\n' + clone.outerHTML, stat: kpStats(document) }; });
+  }
+  document.addEventListener('click', function (e) { // tautan #bagian tetap di dalam halaman
+    var t = e.target, a = t && t.closest ? t.closest('a[href^="#"]') : null;
+    if (a) {
+      e.preventDefault(); var id = a.getAttribute('href').slice(1), el = null;
+      try { id = decodeURIComponent(id); } catch (x) { }
+      if (id) el = document.getElementById(id) || document.getElementsByName(id)[0];
+      if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth' }); else if (!id) window.scrollTo(0, 0);
+    }
+    if (t && t.closest && t.closest('button,label,summary,[role=button]')) mark();
+  }, true);
+  document.addEventListener('input', function (e) { var t = e.target; if (t && t.classList && t.classList.contains('kp-ta')) grow(t); mark(); }, true);
+  document.addEventListener('change', mark, true);
+  window.addEventListener('resize', function () { var T = document.querySelectorAll('textarea.kp-ta'), i; for (i = 0; i < T.length; i++) grow(T[i]); });
+  window.addEventListener('message', function (e) {
+    var d = e.data; if (e.source !== P || !d || d.kp !== 'snap') return;
+    snap().then(function (r) { send({ kp: 'snap', id: d.id, html: r.html, stat: r.stat }); }, function (er) { send({ kp: 'snap', id: d.id, err: String((er && er.message) || er) }); });
+  });
+  function go() { enhance(); send({ kp: 'ready' }); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go); else go();
+}
+
+function hvDoc(html, live) { // sisipkan kebijakan keamanan (+ jembatan bila mode mengerjakan) di awal <head>
+  let inj = '<meta http-equiv="Content-Security-Policy" id="kp-csp" content="' + (live ? CSP_LIVE : CSP_VIEW) + '">';
+  if (live) inj += '<base target="_blank" id="kp-base"><script id="kp-bridge">var kpStats=' + kpStats.toString() + ';(' + kpBridge.toString() + ')();<\/script>';
+  html = String(html == null ? '' : html);
+  let m = html.match(/<head(?:\s[^>]*)?>/i);
+  if (m) return html.slice(0, m.index + m[0].length) + inj + html.slice(m.index + m[0].length);
+  m = html.match(/<html(?:\s[^>]*)?>/i);
+  if (m) return html.slice(0, m.index + m[0].length) + '<head>' + inj + '</head>' + html.slice(m.index + m[0].length);
+  return '<!DOCTYPE html><html><head><meta charset="utf-8">' + inj + '</head><body>' + html + '</body></html>';
+}
+function dlHtml(name, text) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/html;charset=utf-8' })); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 8000);
+}
+function askText(title, label) {
+  return new Promise(res => {
+    const o = document.createElement('div'); o.className = 'ov'; o.style.zIndex = 90;
+    o.innerHTML = `<div class="sheet"><h3 style="margin-top:0">${E(title)}</h3><label class="f">${E(label)}</label><input id="atx" autocomplete="off"><div class="row"><button class="btn" id="acn">Batal</button><button class="btn pri" id="aok">Kirim</button></div></div>`;
+    document.body.appendChild(o); const i = o.querySelector('#atx'); i.focus();
+    const done = v => { o.remove(); res(v); };
+    o.querySelector('#acn').onclick = () => done(null);
+    o.querySelector('#aok').onclick = () => { const v = i.value.trim(); if (!v) { toast('Isi dulu', 1); return; } done(v); };
+    i.onkeydown = e => { if (e.key === 'Enter') o.querySelector('#aok').click(); };
+  });
+}
+
+/* ---------- penampil (siswa mengerjakan / guru pratinjau / lihat pekerjaan) ---------- */
+const HV = { el: null, fr: null, o: null, dirty: false, pend: {}, seq: 0, ready: false, last: null };
+window.addEventListener('message', e => {
+  if (!HV.fr || e.source !== HV.fr.contentWindow) return;
+  const d = e.data; if (!d || typeof d !== 'object') return;
+  if (d.kp === 'dirty') HV.dirty = true;
+  else if (d.kp === 'ready') HV.ready = true;
+  else if (d.kp === 'snap' && HV.pend[d.id]) { const f = HV.pend[d.id]; delete HV.pend[d.id]; f(d); }
+});
+document.addEventListener('fullscreenchange', () => { if (HV.el && !document.fullscreenElement) hvSyncFull(false); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !document.fullscreenElement && !document.querySelector('.ov')) { if (HV.el) hvClose(); else if (GV.el) gvClose(); } });
+
+function hvOpen(o) {
+  hvClose(true);
+  const live = o.mode === 'work', el = document.createElement('div'); el.id = 'hv'; el.className = 'hv';
+  const b = [];
+  if (o.canSave) b.push(`<button class="btn sm" data-a="save" title="Simpan salinan ke perangkat sebagai ${E(o.fname)}">💾 Simpan</button>`);
+  if (o.canSend) b.push('<button class="btn sm pri" data-a="send">📤 Kirim ke guru</button>');
+  if (o.dlName) b.push('<button class="btn sm" data-a="dl">⬇ Unduh</button>');
+  b.push('<button class="btn sm" data-a="full">⛶ Halaman penuh</button><button class="btn sm" data-a="x">✕ Tutup</button>');
+  el.innerHTML = `<div class="hvb"><b class="hvt">${E(o.title)}</b>${o.sub ? `<span class="hvm">${E(o.sub)}</span>` : ''}<div class="sp"></div>${b.join('')}</div><div class="hvw"><iframe class="hvfr" title="${E(o.title)}"></iframe><div class="hvl">Memuat…</div></div>`;
+  const fr = el.querySelector('iframe');
+  fr.setAttribute('sandbox', live ? HSAND : '');
+  fr.addEventListener('load', () => { const l = el.querySelector('.hvl'); if (l) l.remove(); });
+  fr.srcdoc = hvDoc(o.html, live);
+  el.addEventListener('click', ev => {
+    const a = ev.target.closest('[data-a]'); if (!a) return; const k = a.dataset.a;
+    if (k === 'x') hvClose(); else if (k === 'full') hvFull(); else if (k === 'save') hvSave(); else if (k === 'send') hvSend(); else if (k === 'dl') dlHtml(o.dlName, o.html);
+  });
+  document.body.appendChild(el); document.documentElement.classList.add('hvo');
+  Object.assign(HV, { el, fr, o, dirty: false, pend: {}, ready: false, last: null });
+}
+function hvSyncFull(on) {
+  if (!HV.el) return; HV.el.classList.toggle('full', on);
+  const b = HV.el.querySelector('[data-a=full]'); if (b) b.textContent = on ? '⤢ Keluar halaman penuh' : '⛶ Halaman penuh';
+}
+function hvFull() {
+  const el = HV.el; if (!el) return; const on = !el.classList.contains('full'); hvSyncFull(on);
+  try { if (on && el.requestFullscreen) el.requestFullscreen().catch(() => {}); else if (!on && document.fullscreenElement) document.exitFullscreen(); } catch (e) { }
+}
+async function hvUnfull() { // dialog/toast tidak tampil di atas layar penuh milik browser
+  if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch (e) { } await sleep(150); }
+}
+async function hvClose(force) {
+  if (!HV.el) return true;
+  if (!force && HV.dirty && HV.o && HV.o.canSave) { await hvUnfull(); if (!await sure('Tutup file? Perubahan yang belum disimpan atau dikirim akan hilang.', 'Tutup')) return false; }
+  if (document.fullscreenElement) { try { document.exitFullscreen(); } catch (e) { } }
+  if (HV.el) HV.el.remove();
+  HV.el = HV.fr = HV.o = null; document.documentElement.classList.remove('hvo'); return true;
+}
+function hvSnap() {
+  return new Promise((ok, no) => {
+    if (!HV.fr) return no(new Error('File sudah ditutup'));
+    const id = ++HV.seq, to = setTimeout(() => { delete HV.pend[id]; no(new Error('File belum siap atau tidak merespons. Tunggu sampai file tampil penuh, lalu coba lagi.')); }, 20000);
+    HV.pend[id] = r => { clearTimeout(to); r.err ? no(new Error(r.err)) : ok(r); };
+    HV.fr.contentWindow.postMessage({ kp: 'snap', id }, '*');
+  });
+}
+async function hvTake() { // ambil salinan + cek ukuran
+  busy('Menyiapkan file…'); let r;
+  try { r = await hvSnap(); } finally { busy(0); }
+  const sz = new Blob([r.html]).size;
+  if (sz > 8e6) throw new Error('Ukuran pekerjaanmu ' + (sz / 1e6).toFixed(1) + ' MB, melebihi batas 8 MB. Hapus gambar besar yang kamu tambahkan.');
+  return r;
+}
+async function hvSave() {
+  await hvUnfull();
+  run(async () => { const r = await hvTake(); dlHtml(HV.o.fname, r.html); HV.dirty = false; toast('Tersimpan di perangkat: ' + HV.o.fname); });
+}
+async function hvSend() {
+  await hvUnfull();
+  run(async () => {
+    const o = HV.o, r = await hvTake(); let ang = '';
+    if (o.post.mode === 'kelompok') { ang = await askText('Kirim LKPD kelompok', 'Nama anggota kelompok'); if (ang === null) return; }
+    else if (!await sure('Kirim pekerjaan ini ke guru? Kamu masih bisa mengirim ulang nanti.', 'Kirim')) return;
+    const b64 = await fileB64(new Blob([r.html], { type: 'text/html' }));
+    const res = await call('submit', { post: o.post.id, html: { name: o.fname, mime: 'text/html', b64 }, anggota: ang, stat: r.stat }, 'Mengirim…');
+    HV.dirty = false; HV.last = { name: res.name || o.fname, html: r.html };
+    modal(`<div class="score">✔</div><p style="text-align:center">Terkirim ke guru sebagai<br><b>${E(HV.last.name)}</b><br><small>Nilai akan diberikan guru.</small></p><button class="btn blk" onclick="dlHtml(HV.last.name,HV.last.html)">⬇ Simpan salinan ke perangkat</button><div class="row"><button class="btn blk" onclick="closeM()">Lanjut mengerjakan</button><button class="btn pri blk" onclick="closeM();hvClose(1)">Selesai & tutup file</button></div>`);
+    tPost();
+  });
+}
+
+/* kartu postingan: tombol buka / kerjakan / lihat */
+function htmlBox(p, g) {
+  const nm = (p.file || '').split('|')[1] || 'file.html'; let b = '';
+  if (g) b = `<button class="btn sm pri" onclick="bukaH('${p.id}')">▶ Buka file</button>`;
+  else if (p.tipe === 'materi') b = `<button class="btn pri" onclick="bukaH('${p.id}')">▶ Buka materi interaktif</button>`;
+  else if (!p.mine) b = `<button class="btn pri" onclick="bukaH('${p.id}')">✏️ Buka & kerjakan</button>`;
+  else b = `<button class="btn sm" onclick="bukaH('${p.id}','view')">👁 Lihat pekerjaanku</button><button class="btn sm" onclick="bukaH('${p.id}','mine')">✏️ Lanjutkan</button><button class="btn sm" onclick="bukaH('${p.id}')">↺ Kerjakan ulang</button>`;
+  return `<div class="hbox"><span class="tag">🌐 File interaktif</span> <small>${E(nm)}</small><div class="row">${b}</div></div>`;
+}
+function bukaH(id, how) { // how: kosong = file asli | 'mine' = lanjutkan pekerjaanku | 'view' = lihat pekerjaanku (hanya baca)
+  const p = (D.posts || []).find(x => x.id === id); if (!p) return;
+  const g = S.me.role !== 'siswa', fn = hname(S.me.nama, p.judul);
+  run(async () => {
+    const r = how ? await call('htmlGet', { post: id, mine: 1 }, 'Memuat pekerjaanmu…') : await cached('h_' + id, 600000, () => call('htmlGet', { post: id }, 'Memuat file…'));
+    hvOpen({ html: r.html, mode: how === 'view' ? 'view' : 'work', title: p.judul, sub: how === 'view' ? 'Pekerjaanku (hanya baca)' : g ? 'Pratinjau guru' : '', fname: fn,
+      post: p, canSave: !g && how !== 'view', canSend: !g && how !== 'view' && NL.includes(p.tipe), dlName: how === 'view' ? fn : g ? (r.name || 'materi.html') : '' });
+  });
+}
+
+/* ---------- layar penilaian guru ---------- */
+const GV = { el: null, po: null, list: [], belum: [], i: -1, flt: 'all', q: '', cache: {}, tk: 0, cur: null };
+function gradeHtml(id) {
+  run(async () => {
+    const r = await call('subsHtml', { post: id }, 'Memuat pengumpulan…');
+    Object.assign(GV, { po: r.post, list: r.list, belum: r.belum, i: -1, flt: 'all', q: '', cache: {}, cur: null });
+    gvDraw(); const f = GV.list.findIndex(x => x.nilai === ''); gvPick(f >= 0 ? f : (GV.list.length ? 0 : -1));
+  });
+}
+function gvClose() { if (GV.el) GV.el.remove(); GV.el = null; GV.tk++; document.documentElement.classList.remove('hvo'); }
+function gvDraw() {
+  gvClose(); const el = document.createElement('div'); el.id = 'gv'; el.className = 'hv gv';
+  el.innerHTML = `<div class="hvb"><b class="hvt">Penilaian: ${E(GV.po.judul)}</b><span class="hvm" id="gvc"></span><div class="sp"></div><button class="btn sm" onclick="gvClose()">✕ Tutup</button></div>
+<div class="gvb"><aside class="gvl"><input id="gvq" placeholder="🔍 Cari nama…" oninput="GV.q=this.value;gvList()"><div class="seg" id="gvf"></div><div id="gvli"></div></aside>
+<section class="gvm"><div class="gvt row"><button class="btn sm" onclick="gvTog()">☰ Daftar siswa</button><button class="btn sm" onclick="gvNav(-1)">←</button><button class="btn sm" onclick="gvNav(1)">→</button><b id="gvnm"></b></div><div class="hvw"><iframe class="hvfr" sandbox="" title="Pekerjaan siswa"></iframe><div class="hvl" id="gvl" hidden>Memuat pekerjaan…</div></div><div class="gvp" id="gvp"></div></section></div>`;
+  document.body.appendChild(el); document.documentElement.classList.add('hvo'); GV.el = el; gvList();
+}
+function gvTog() { GV.el.classList.toggle('lst'); }
+const gvVis = () => { const q = GV.q.trim().toLowerCase(), a = []; GV.list.forEach((x, k) => { if ((GV.flt === 'todo' && x.nilai !== '') || (GV.flt === 'done' && x.nilai === '') || (q && (x.nama + ' ' + x.kelas).toLowerCase().indexOf(q) < 0)) return; a.push(k); }); return a; };
+function gvList() {
+  if (!GV.el) return; const n = GV.list.filter(x => x.nilai !== '').length;
+  $('#gvc').textContent = `${n}/${GV.list.length} sudah dinilai · ${GV.belum.length} belum mengumpulkan`;
+  $('#gvf').innerHTML = [['all', 'Semua'], ['todo', 'Belum dinilai'], ['done', 'Sudah dinilai']].map(t => `<button class="${GV.flt == t[0] ? 'on' : ''}" onclick="GV.flt='${t[0]}';gvList()">${t[1]}</button>`).join('');
+  const v = gvVis();
+  $('#gvli').innerHTML = (v.length ? v.map(k => { const x = GV.list[k]; return `<button class="gi ${k === GV.i ? 'on' : ''}" onclick="gvPick(${k})"><span><b>${E(x.nama)}</b><small>${E(x.kelas)} · ${E(x.waktu)}</small></span><em class="${x.nilai === '' ? 'nn' : 'nv'}">${x.nilai === '' ? '—' : E(x.nilai)}</em></button>`; }).join('') : '<div class="empty">Tidak ada.</div>') +
+    (GV.belum.length ? `<details style="margin-top:8px"><summary>Belum mengumpulkan (${GV.belum.length})</summary>${GV.belum.map(x => `<div class="gb">${E(x.nama)} <small>${E(x.kelas)}</small></div>`).join('')}</details>` : '');
+}
+function gvNav(d) { const v = gvVis(), k = d > 0 ? v.find(x => x > GV.i) : v.filter(x => x < GV.i).pop(); if (k == null) return toast(d > 0 ? 'Sudah sampai yang terakhir' : 'Ini yang pertama'); gvPick(k); }
+async function gvPick(i) {
+  if (!GV.el) return; GV.i = i; GV.el.classList.remove('lst'); gvList();
+  const x = GV.list[i], fr = GV.el.querySelector('iframe'), tk = ++GV.tk;
+  if (!x) { fr.srcdoc = ''; $('#gvp').innerHTML = '<div class="empty">Belum ada siswa yang mengumpulkan.</div>'; $('#gvnm').textContent = ''; return; }
+  $('#gvnm').textContent = x.nama; $('#gvl').hidden = false;
+  try {
+    const r = GV.cache[x.id] || (GV.cache[x.id] = await call('htmlGet', { sub: x.id }));
+    if (tk !== GV.tk || !GV.el) return;
+    const ks = Object.keys(GV.cache); if (ks.length > 8) delete GV.cache[ks[0]];
+    GV.cur = { x, html: r.html, name: r.name }; fr.srcdoc = hvDoc(r.html, false);
+    let st = null; try { st = kpStats(new DOMParser().parseFromString(r.html, 'text/html')); } catch (e) { }
+    gvPanel(x, st);
+    const nx = gvVis().find(k => k > i); if (nx != null && !GV.cache[GV.list[nx].id]) call('htmlGet', { sub: GV.list[nx].id }).then(z => { GV.cache[GV.list[nx].id] = z; }).catch(() => {}); // muat siswa berikutnya di latar
+  } catch (e) { if (tk === GV.tk && GV.el) { delete GV.cache[x.id]; $('#gvp').innerHTML = `<div class="note">⚠ ${E(e.message || e)}</div><button class="btn" onclick="gvPick(${i})">↻ Coba lagi</button>`; } }
+  finally { if (tk === GV.tk && GV.el) $('#gvl').hidden = true; }
+}
+function gvPanel(x, st) {
+  let s = ''; if (st) {
+    if (st.q.t) s += `<span class="gs">🧩 Kuis dalam file: <b>${st.q.r}</b> benar dari ${st.q.t} (${st.q.d} terjawab)</span>`;
+    if (st.f.t) s += `<span class="gs">✍️ Kolom isian terisi: <b>${st.f.f}</b> dari ${st.f.t}</span>`;
+    if (st.c.t) s += `<span class="gs">☑ Ceklis: <b>${st.c.c}</b> dari ${st.c.t}</span>`;
+  }
+  let j = {}; try { j = JSON.parse(x.jawab || '{}'); } catch (e) { }
+  const sug = st && st.q.t ? Math.round(st.q.r / st.q.t * 100) : null, fn = (x.file || '').split('|')[1] || GV.cur.name || 'pekerjaan.html';
+  $('#gvp').innerHTML = `<div class="row" style="margin-top:0"><div style="flex:1;min-width:0"><b>${E(x.nama)}</b> <small>${E(x.kelas)} · dikirim ${E(x.waktu)}${j.anggota ? ' · Kelompok: ' + E(j.anggota) : ''}</small></div><button class="btn sm" onclick="gvDl()">⬇ ${E(fn)}</button></div>
+<div>${s || '<small>Tidak ada isian yang terbaca otomatis. Nilai berdasarkan tampilan file di atas.</small>'}${sug != null ? `<button class="btn sm" onclick="gvSet(${sug})">Pakai saran nilai ${sug}</button>` : ''}</div>
+<div class="row"><input id="gvn" type="number" min="0" max="100" inputmode="numeric" placeholder="Nilai 0-100" value="${E(x.nilai)}" style="max-width:130px;margin:0" onkeydown="if(event.key==='Enter')gvSave(1)">${[50, 60, 70, 75, 80, 85, 90, 100].map(v => `<button class="btn sm" onclick="gvSet(${v})">${v}</button>`).join('')}</div>
+<input id="gvk" placeholder="Catatan untuk siswa (opsional)" maxlength="1000" value="${E(x.catatan)}" onkeydown="if(event.key==='Enter')gvSave(1)">
+<div class="row" style="margin-bottom:0"><button class="btn" onclick="gvNav(-1)">← Sebelumnya</button><button class="btn" onclick="gvSave(0)">Simpan</button><button class="btn pri" onclick="gvSave(1)">Simpan & berikutnya →</button></div>`;
+}
+function gvSet(v) { const n = $('#gvn'); if (n) { n.value = v; n.focus(); } }
+function gvDl() { if (GV.cur) dlHtml(((GV.cur.x.file || '').split('|')[1]) || GV.cur.name || 'pekerjaan.html', GV.cur.html); }
+function gvSave(next) {
+  const x = GV.list[GV.i]; if (!x) return; const v = $('#gvn').value.trim(), k = $('#gvk').value.trim();
+  run(async () => {
+    await call('nilaiSub', { id: x.id, nilai: v, catatan: k });
+    x.nilai = v === '' ? '' : String(Number(v)); x.catatan = k; gvList(); toast('Nilai ' + x.nama + ' tersimpan');
+    if (next) { const nx = gvVis().find(q => q > GV.i); if (nx != null) gvPick(nx); else toast('Semua yang tampil sudah selesai 🎉'); }
+  });
+}
+
+/* ---------- form guru: pilih / pratinjau file HTML ---------- */
+function pickHtml(inp) {
+  try { FM.html = inp.files[0] ? chkHtml(inp.files[0]) : null; } catch (e) { FM.html = null; inp.value = ''; toast(e.message, 1); }
+  const n = document.getElementById('phn'); if (n) n.textContent = FM.html ? FM.html.name + ' · ' + (FM.html.size / 1024).toFixed(0) + ' KB' : '';
+  syncSoal();
+}
+function syncSoal() { const s = document.getElementById('ps'); if (s) s.hidden = !NL.includes(NT) || !!(FM.html && NT !== 'kuis'); }
+function prevHtml() { const f = FM.html; if (!f) return toast('Pilih file HTML dulu', 1); run(async () => { hvOpen({ html: await f.text(), mode: 'work', title: 'Pratinjau: ' + f.name, sub: 'Pratinjau guru (belum dipublikasikan)', fname: f.name }); }); }
+
 init();
