@@ -9,17 +9,18 @@
  */
 const TZ = 'Asia/Jakarta';
 const PROP = PropertiesService.getScriptProperties();
-const DEF_MODEL = 'gemini-flash-latest';
+const DEF_MODEL = 'gemini-flash-lite-latest'; // ringan & cepat; pilihan lain ada di menu Akun
 const TIPE = ['materi', 'tugas', 'kuis', 'lkpd', 'pengumuman'];
 const NILAI = ['kuis', 'tugas', 'lkpd'];
 const MAX_DOC = 8e6;        // lampiran PDF/foto/dokumen (byte)
 const MAX_VID = 5e8;        // video (byte), diunggah langsung browser -> Drive
+const MAX_HTML = 8e6;       // file HTML interaktif (materi dari guru / pekerjaan siswa), byte
 const TOKEN_TTL = 24 * 3600 * 1000;
 const SCHEMA = {
   Users: ['id', 'role', 'username', 'nama', 'pass', 'nisn', 'lahir', 'kelas', 'model'],
   Mapel: ['id', 'nama', 'guru', 'kelas'],
-  Posts: ['id', 'mapel', 'tipe', 'judul', 'isi', 'link', 'file', 'soal', 'mode', 'dibuat'],
-  Subs: ['id', 'post', 'siswa', 'jawab', 'nilai', 'waktu', 'file'],
+  Posts: ['id', 'mapel', 'tipe', 'judul', 'isi', 'link', 'file', 'soal', 'mode', 'dibuat', 'kelas', 'fmt'],
+  Subs: ['id', 'post', 'siswa', 'jawab', 'nilai', 'waktu', 'file', 'catatan'],
   QA: ['id', 'mapel', 'siswa', 'tanya', 'jawab', 'waktu'],
   Kelas: ['id', 'nama']
 };
@@ -100,7 +101,7 @@ function handle_(req) {
 }
 function locked_(f) {
   const L = LockService.getScriptLock();
-  try { L.waitLock(25000); } catch (e) { throw new Error('Server sedang sibuk, coba lagi sebentar lagi.'); }
+  try { L.waitLock(30000); } catch (e) { throw new Error('Server sedang sibuk, coba lagi sebentar lagi.'); }
   try {
     Object.keys(M).forEach(k => { if (k !== 'ss') delete M[k]; });
     M.fresh = true; // di dalam lock: selalu baca data terbaru, lewati cache
@@ -138,7 +139,11 @@ function cdel_(key) {
 function inval_(n) { delete M[n]; if (SMALL.indexOf(n) >= 0) cdel_('db_' + n); }
 
 function hdr_(n) {
-  if (!M['h' + n]) { const t = tab_(n); M['h' + n] = t.getRange(1, 1, 1, t.getLastColumn()).getValues()[0].map(String); }
+  if (!M['h' + n]) {
+    const t = tab_(n), h = t.getRange(1, 1, 1, t.getLastColumn()).getValues()[0].map(String);
+    (SCHEMA[n] || []).forEach(k => { if (h.indexOf(k) < 0) { t.getRange(1, h.length + 1).setValue(k); h.push(k); } }); // kolom baru ditambah otomatis
+    M['h' + n] = h;
+  }
   return M['h' + n];
 }
 function all_(n) {
@@ -204,6 +209,14 @@ function ownMapel_(me, id) {
   if (!m || (me.role !== 'admin' && m.guru !== me.id)) throw new Error('Mapel tidak ditemukan / bukan milik Anda');
   return m;
 }
+const pk_ = x => String(x.kelas || '').split(',').map(s => s.trim()).filter(Boolean);       // kelas tujuan postingan (kosong = semua kelas mapel)
+const canSee_ = (me, x) => me.role !== 'siswa' || !pk_(x).length || pk_(x).indexOf(me.kelas) >= 0;
+function pickKelas_(m, raw) { // validasi pilihan kelas postingan; semua kelas terpilih disimpan kosong
+  if (raw == null) return ''; // klien lama tanpa pilihan kelas = semua kelas mapel
+  const mk = kls_(m), a = [...new Set((Array.isArray(raw) ? raw : []).map(x => String(x).trim()).filter(x => mk.indexOf(x) >= 0))];
+  if (!a.length) throw new Error('Pilih minimal satu kelas tujuan postingan');
+  return a.length === mk.length ? '' : a.join(',');
+}
 const avg_ = a => { const v = a.filter(x => x !== '').map(Number); return v.length ? Math.round(v.reduce((x, y) => x + y) / v.length) : ''; };
 
 /* =====================  KEAMANAN  ===================== */
@@ -260,6 +273,7 @@ function folder_(key, name, parent) {
   if (id) { try { return DriveApp.getFolderById(id); } catch (e) {} }
   const f = (parent || DriveApp.getRootFolder()).createFolder(name); PROP.setProperty(key, f.getId()); M.props = null; return f;
 }
+const akun_ = () => { try { return Session.getEffectiveUser().getEmail(); } catch (e) { return ''; } };
 const rootF_ = () => folder_('F_ROOT', 'KelasPintar');
 const upF_ = () => folder_('F_UP', 'Lampiran Materi', rootF_());
 const vidF_ = () => folder_('F_VID', 'Video', rootF_());
@@ -284,6 +298,40 @@ function saveFile_(folder, f, label) { // base64 dari browser -> file Drive, kem
   x.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   return x.getId() + '|' + name;
 }
+// Nama berkas pekerjaan siswa: Nama_Materi.html (tanpa spasi/tanda baca; harus sama dengan hname() di app.js)
+function hname_(nama, judul) {
+  const sl = (s, n) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, n).replace(/_+$/, '');
+  return (sl(nama, 40) || 'Siswa') + '_' + (sl(judul, 60) || 'Materi') + '.html';
+}
+// File HTML interaktif: disimpan PRIVAT di Drive (tanpa tautan publik). Siswa/guru membukanya lewat API (htmlGet), bukan lewat Drive.
+function saveHtml_(folder, f, name) {
+  if (!f || !f.b64) throw new Error('File HTML kosong');
+  if (String(f.b64).length > MAX_HTML * 1.4) throw new Error('File HTML maks 8 MB');
+  const bytes = Utilities.base64Decode(f.b64);
+  if (bytes.length > MAX_HTML) throw new Error('File HTML maks 8 MB');
+  name = String(name || f.name || 'materi.html').replace(/[\\\/|]/g, '-').slice(0, 120);
+  if (!/\.html?$/i.test(name)) name += '.html';
+  const head = Utilities.newBlob(bytes.slice(0, 4000)).getDataAsString('UTF-8');
+  if (!/<\s*(!doctype|html|head|body|div|p|h1|section|script|style)\b/i.test(head)) throw new Error('Isi file bukan HTML yang valid (gunakan file .html berformat UTF-8)');
+  const x = folder.createFile(Utilities.newBlob(bytes, 'text/html', name));
+  return x.getId() + '|' + name;
+}
+function readHtml_(ref) { // ref = "id|nama"
+  const a = String(ref || '').split('|'), id = a[0];
+  if (!/^[\w-]{10,}$/.test(id)) throw new Error('File HTML tidak ditemukan');
+  let f; try { f = DriveApp.getFileById(id); } catch (e) { throw new Error('File HTML tidak ditemukan di Drive (mungkin sudah dihapus)'); }
+  if (!/^text\/html/.test(f.getMimeType())) throw new Error('Berkas ini bukan file HTML');
+  if (f.getSize() > MAX_HTML * 1.05) throw new Error('File HTML terlalu besar');
+  return { name: a[1] || f.getName(), html: f.getBlob().getDataAsString('UTF-8') };
+}
+const cleanStat_ = s => { // ringkasan isian dari file siswa (hanya saran untuk guru; angka dibatasi)
+  const n = x => Math.max(0, Math.min(999, Math.round(Number(x)) || 0)), o = {};
+  if (!s || typeof s !== 'object') return o;
+  if (s.q) o.q = { t: n(s.q.t), d: n(s.q.d), r: n(s.q.r) };   // kuis di dalam file: jumlah, terjawab, benar
+  if (s.f) o.f = { t: n(s.f.t), f: n(s.f.f) };                 // kolom isian: jumlah, terisi
+  if (s.c) o.c = { t: n(s.c.t), c: n(s.c.c) };                 // ceklis: jumlah, tercentang
+  return o;
+};
 function trashOwn_(s) { // hanya membuang file yang dibuat aplikasi ini
   const id = String(s || '').split('|')[0]; if (!id) return;
   try { const f = DriveApp.getFileById(id); if (inOwn_(f)) f.setTrashed(true); } catch (e) {}
@@ -351,7 +399,8 @@ const ACT = {
   /* ---- pengaturan (admin) ---- */
   cfgGet: [['admin'], 0, () => ({
     sekolah: cfg_('sekolah'), buku: cfg_('buku'), hasGlobalKey: !!props_().GK,
-    root: rootF_().getUrl(), up: upF_().getUrl(), vid: vidF_().getUrl(), sub: subF_().getUrl()
+    root: rootF_().getUrl(), up: upF_().getUrl(), vid: vidF_().getUrl(), sub: subF_().getUrl(),
+    upId: upF_().getId(), vidId: vidF_().getId(), subId: subF_().getId(), akun: akun_()
   })],
   cfgSet: [['admin'], 1, (me, p) => {
     if ('sekolah' in p) PROP.setProperty('C_sekolah', String(p.sekolah || '').trim().slice(0, 80));
@@ -364,6 +413,15 @@ const ACT = {
         PROP.setProperty('C_buku', id);
       }
     }
+    const FK = [['fup', 'F_UP', 'Lampiran Materi'], ['fvid', 'F_VID', 'Video'], ['fsub', 'F_SUB', 'Pengumpulan Siswa']], ganti = [];
+    FK.forEach(k => { // validasi semua dulu, simpan hanya jika semuanya benar
+      const raw = String(p[k[0]] || '').trim(); if (!raw) return;
+      const id = fid_(raw); if (!id) throw new Error('Tautan/ID folder ' + k[2] + ' tidak valid');
+      let f; try { f = DriveApp.getFolderById(id); f.getName(); } catch (e) { throw new Error('Folder ' + k[2] + ' tidak bisa dibuka. Bagikan folder ke akun ' + (akun_() || 'pemilik script') + ' sebagai Editor.'); }
+      try { f.createFile('tes-akses.txt', 'ok').setTrashed(true); } catch (e) { throw new Error('Folder ' + k[2] + ' hanya bisa dibaca. Ubah akses akun ' + (akun_() || 'pemilik script') + ' menjadi Editor.'); }
+      ganti.push([k[1], id]);
+    });
+    ganti.forEach(g => PROP.setProperty(g[0], g[1]));
     if (p.gkey) PROP.setProperty('GK', String(p.gkey).trim());
     if (p.gclear) PROP.deleteProperty('GK');
     M.props = null; return 1;
@@ -436,7 +494,7 @@ const ACT = {
 
   /* ---- beranda ---- */
   stat: [null, 0, me => {
-    const Mp = visMapel_(me), ids = new Set(Mp.map(m => m.id)), P = all_('Posts').filter(x => ids.has(x.mapel));
+    const Mp = visMapel_(me), ids = new Set(Mp.map(m => m.id)), P = all_('Posts').filter(x => ids.has(x.mapel) && canSee_(me, x));
     if (me.role === 'siswa') {
       const mine = all_('Subs').filter(x => x.siswa === me.id), done = new Set(mine.map(x => x.post));
       return { mapel: Mp.length, todo: P.filter(x => NILAI.indexOf(x.tipe) >= 0 && !done.has(x.id)).length, avg: (a => a === '' ? '-' : a)(avg_(mine.map(x => x.nilai))) };
@@ -450,7 +508,7 @@ const ACT = {
   }],
   feed: [null, 0, me => {
     const Mp = {}; visMapel_(me).forEach(m => Mp[m.id] = m.nama);
-    return all_('Posts').filter(x => Mp[x.mapel]).reverse().slice(0, 30)
+    return all_('Posts').filter(x => Mp[x.mapel] && canSee_(me, x)).reverse().slice(0, 30)
       .map(x => ({ id: x.id, mapel: x.mapel, mn: Mp[x.mapel], tipe: x.tipe, judul: x.judul, dibuat: x.dibuat }));
   }],
 
@@ -478,24 +536,28 @@ const ACT = {
   /* ---- postingan ---- */
   postList: [null, 0, (me, p) => {
     if (!visMapel_(me).some(m => m.id === p.mapel)) throw new Error('Tidak diizinkan');
-    const S = {}; if (me.role === 'siswa') all_('Subs').filter(x => x.siswa === me.id).forEach(x => S[x.post] = { nilai: x.nilai, waktu: x.waktu });
-    return all_('Posts').filter(x => x.mapel === p.mapel).reverse().map(x => pubPost(x, me, S[x.id]));
+    const S = {}; if (me.role === 'siswa') all_('Subs').filter(x => x.siswa === me.id).forEach(x => S[x.post] = { nilai: x.nilai, waktu: x.waktu, catatan: x.catatan || '' });
+    return all_('Posts').filter(x => x.mapel === p.mapel && canSee_(me, x)).reverse().map(x => pubPost(x, me, S[x.id]));
   }],
   postAdd: [G, 1, (me, p) => {
     const m = ownMapel_(me, p.mapel), judul = String(p.judul || '').trim();
     if (TIPE.indexOf(p.tipe) < 0 || !judul) throw new Error('Jenis dan judul wajib diisi');
     if (p.link && !/^https?:\/\//i.test(p.link)) throw new Error('Tautan harus diawali http:// atau https://');
-    const soal = NILAI.indexOf(p.tipe) >= 0 ? cleanSoal_(p.soal) : [];
+    const isHtml = !!(p.html && p.html.b64);
+    if (isHtml && ['materi', 'tugas', 'lkpd'].indexOf(p.tipe) < 0) throw new Error('File HTML hanya untuk Materi, Tugas, atau LKPD');
+    if (isHtml && (p.file || (p.vfile && p.vfile.id))) throw new Error('Pilih salah satu: file HTML, PDF/foto, atau video');
+    const soal = NILAI.indexOf(p.tipe) >= 0 && !isHtml ? cleanSoal_(p.soal) : [];
     if (p.file && p.vfile && p.vfile.id) throw new Error('Pilih salah satu: file PDF/foto atau video');
     let file = '';
-    if (p.file) file = saveFile_(upF_(), p.file);
+    if (isHtml) file = saveHtml_(upF_(), p.html);
+    else if (p.file) file = saveFile_(upF_(), p.file);
     if (p.vfile && p.vfile.id) {
       const vid = String(p.vfile.id);
       if (!/^[\w-]{10,}$/.test(vid)) throw new Error('ID video tidak valid');
       if (!inFolder_(DriveApp.getFileById(vid), vidF_().getId())) throw new Error('Video tidak ditemukan di folder aplikasi');
       file = vid + '|' + String(p.vfile.name || 'video.mp4').replace(/\|/g, '-');
     }
-    add_('Posts', { mapel: m.id, tipe: p.tipe, judul, isi: String(p.isi || '').slice(0, 20000), link: p.link || '', file, soal: JSON.stringify(soal), mode: p.tipe === 'lkpd' ? (p.mode === 'kelompok' ? 'kelompok' : 'individu') : '', dibuat: now_() });
+    add_('Posts', { kelas: pickKelas_(m, p.kelas), mapel: m.id, tipe: p.tipe, judul, isi: String(p.isi || '').slice(0, 20000), link: p.link || '', file, fmt: isHtml ? 'html' : '', soal: JSON.stringify(soal), mode: p.tipe === 'lkpd' ? (p.mode === 'kelompok' ? 'kelompok' : 'individu') : '', dibuat: now_() });
     return 1;
   }],
   postEdit: [G, 1, (me, p) => { // ubah judul/isi/tautan tanpa menghapus & membuat ulang
@@ -503,7 +565,15 @@ const ACT = {
     ownMapel_(me, x.mapel);
     const judul = String(p.judul || '').trim(); if (!judul) throw new Error('Judul wajib diisi');
     if (p.link && !/^https?:\/\//i.test(p.link)) throw new Error('Tautan harus diawali http:// atau https://');
-    upd_('Posts', x, { judul, isi: String(p.isi || '').slice(0, 20000), link: p.link || '' }); return 1;
+    const o = { judul, isi: String(p.isi || '').slice(0, 20000), link: p.link || '' };
+    if (Array.isArray(p.kelas)) o.kelas = pickKelas_(ownMapel_(me, x.mapel), p.kelas);
+    if (p.html && p.html.b64) { // ganti file HTML (pengumpulan siswa yang sudah ada tidak berubah)
+      if (x.fmt !== 'html') throw new Error('Postingan ini bukan postingan file HTML');
+      o.file = saveHtml_(upF_(), p.html);
+    }
+    upd_('Posts', x, o);
+    if (o.file) trashOwn_(x.file);
+    return 1;
   }],
   vidInit: [G, 0, (me, p) => { // sesi unggah: browser mengirim video langsung ke Drive (tanpa lewat server)
     ownMapel_(me, p.mapel);
@@ -537,7 +607,7 @@ const ACT = {
   /* ---- pengumpulan & nilai ---- */
   submit: [['siswa'], 1, (me, p) => {
     const po = all_('Posts').find(x => x.id === p.post);
-    if (!po || NILAI.indexOf(po.tipe) < 0 || !visMapel_(me).some(m => m.id === po.mapel)) throw new Error('Tidak diizinkan');
+    if (!po || NILAI.indexOf(po.tipe) < 0 || !visMapel_(me).some(m => m.id === po.mapel) || !canSee_(me, po)) throw new Error('Tidak diizinkan');
     const old = all_('Subs').find(x => x.post === po.id && x.siswa === me.id);
     if (old && po.tipe === 'kuis') throw new Error('Kuis sudah dikerjakan');
     const so = po.soal ? JSON.parse(po.soal) : [], ans = (Array.isArray(p.ans) ? p.ans : []).map(a => String(a).slice(0, 3000));
@@ -546,24 +616,60 @@ const ACT = {
       let b = 0; so.forEach((q, i) => { if (String(ans[i]) === String(q.k)) b++; });
       nilai = String(Math.round(b / so.length * 100));
     }
-    let file = old ? old.file : '';
-    if (p.file && po.tipe !== 'kuis') { const nf = saveFile_(subF_(), p.file, me.nama); if (old) trashOwn_(old.file); file = nf; }
-    const o = { post: po.id, siswa: me.id, jawab: JSON.stringify({ ans, teks: String(p.teks || '').slice(0, 15000), anggota: String(p.anggota || '').slice(0, 500) }), nilai, waktu: now_(), file };
+    let file = old ? old.file : '', stat;
+    if (po.fmt === 'html') { // pekerjaan = snapshot file HTML yang diisi siswa, disimpan sebagai Nama_Materi.html
+      if (p.html && p.html.b64) { const nf = saveHtml_(subF_(), p.html, hname_(me.nama, po.judul)); if (old) trashOwn_(old.file); file = nf; stat = cleanStat_(p.stat); }
+      else if (!old || !old.file) throw new Error('Pekerjaan belum ada. Buka file, kerjakan, lalu kirim.');
+    } else if (p.file && po.tipe !== 'kuis') { const nf = saveFile_(subF_(), p.file, me.nama); if (old) trashOwn_(old.file); file = nf; }
+    const jw = { ans, teks: String(p.teks || '').slice(0, 15000), anggota: String(p.anggota || '').slice(0, 500) };
+    if (stat) jw.stat = stat;
+    else if (po.fmt === 'html' && old) { try { const oj = JSON.parse(old.jawab || '{}'); if (oj.stat) jw.stat = oj.stat; } catch (e) {} }
+    const o = { post: po.id, siswa: me.id, jawab: JSON.stringify(jw), nilai, waktu: now_(), file, catatan: '' };
     if (old) upd_('Subs', old, o); else add_('Subs', o);
-    return { nilai };
+    return { nilai, name: po.fmt === 'html' ? hname_(me.nama, po.judul) : '' };
   }],
   subs: [G, 0, (me, p) => {
     const po = all_('Posts').find(x => x.id === p.post); if (!po) throw new Error('Tidak ditemukan');
     ownMapel_(me, po.mapel);
     const U = {}; all_('Users').forEach(u => U[u.id] = u);
-    return all_('Subs').filter(x => x.post === po.id).map(x => ({ id: x.id, nama: (U[x.siswa] || {}).nama, kelas: (U[x.siswa] || {}).kelas, jawab: x.jawab, nilai: x.nilai, waktu: x.waktu, file: x.file }));
+    return all_('Subs').filter(x => x.post === po.id).map(x => ({ id: x.id, nama: (U[x.siswa] || {}).nama, kelas: (U[x.siswa] || {}).kelas, jawab: x.jawab, nilai: x.nilai, waktu: x.waktu, file: x.file, catatan: x.catatan || '' }));
   }],
   nilaiSub: [G, 1, (me, p) => {
     const s = all_('Subs').find(x => x.id === p.id); if (!s) throw new Error('Tidak ditemukan');
     const po = all_('Posts').find(x => x.id === s.post); if (!po) throw new Error('Postingan sudah dihapus');
     ownMapel_(me, po.mapel);
     const n = Number(p.nilai); if (p.nilai !== '' && !(n >= 0 && n <= 100)) throw new Error('Nilai 0-100');
-    upd_('Subs', s, { nilai: p.nilai === '' ? '' : String(n) }); return 1;
+    const o = { nilai: p.nilai === '' ? '' : String(n) };
+    if ('catatan' in p) o.catatan = String(p.catatan || '').trim().slice(0, 1000);
+    upd_('Subs', s, o); return 1;
+  }],
+  // daftar pengumpulan satu postingan + siswa yang belum mengumpulkan (untuk layar penilaian file HTML)
+  subsHtml: [G, 0, (me, p) => {
+    const po = all_('Posts').find(x => x.id === p.post); if (!po) throw new Error('Tidak ditemukan');
+    const m = ownMapel_(me, po.mapel), U = {}; all_('Users').forEach(u => U[u.id] = u);
+    const kt = pk_(po).length ? pk_(po) : kls_(m), by = {};
+    const list = all_('Subs').filter(x => x.post === po.id).map(x => { by[x.siswa] = 1; const u = U[x.siswa] || {}; return { id: x.id, nama: u.nama || '(siswa dihapus)', kelas: u.kelas || '', jawab: x.jawab, nilai: x.nilai, waktu: x.waktu, file: x.file, catatan: x.catatan || '' }; });
+    list.sort((a, b) => (a.kelas + a.nama).localeCompare(b.kelas + b.nama, 'id'));
+    const belum = all_('Users').filter(u => u.role === 'siswa' && kt.indexOf(u.kelas) >= 0 && !by[u.id]).sort((a, b) => (a.kelas + a.nama).localeCompare(b.kelas + b.nama, 'id')).map(u => ({ nama: u.nama, kelas: u.kelas }));
+    return { post: { id: po.id, judul: po.judul, tipe: po.tipe, mode: po.mode }, list, belum };
+  }],
+  // isi file HTML: asli milik postingan (semua yang berhak melihat), atau pekerjaan siswa (guru pemilik mapel / siswa itu sendiri)
+  htmlGet: [null, 0, (me, p) => {
+    if (p.sub) {
+      const s = all_('Subs').find(x => x.id === p.sub); if (!s) throw new Error('Pengumpulan tidak ditemukan');
+      const po = all_('Posts').find(x => x.id === s.post); if (!po) throw new Error('Postingan sudah dihapus');
+      if (me.role === 'siswa') { if (s.siswa !== me.id) throw new Error('Tidak diizinkan'); } else ownMapel_(me, po.mapel);
+      return readHtml_(s.file);
+    }
+    const po = all_('Posts').find(x => x.id === p.post); if (!po) throw new Error('Postingan tidak ditemukan');
+    if (!visMapel_(me).some(m => m.id === po.mapel) || !canSee_(me, po)) throw new Error('Tidak diizinkan');
+    if (po.fmt !== 'html') throw new Error('Postingan ini bukan file HTML');
+    if (p.mine) { // pekerjaan milik siswa yang sedang login
+      const s = all_('Subs').find(x => x.post === po.id && x.siswa === me.id);
+      if (!s || !s.file) throw new Error('Kamu belum mengirim pekerjaan untuk tugas ini');
+      return readHtml_(s.file);
+    }
+    return readHtml_(po.file);
   }],
   rekap: [G, 0, (me, p) => {
     const m = ownMapel_(me, p.mapel), P = all_('Posts').filter(x => x.mapel === m.id && NILAI.indexOf(x.tipe) >= 0), K = kls_(m);
@@ -584,6 +690,14 @@ const ACT = {
     return all_('QA').filter(x => x.mapel === p.mapel && (me.role !== 'siswa' || x.siswa === me.id)).reverse()
       .map(x => ({ id: x.id, nama: U[x.siswa], tanya: x.tanya, jawab: x.jawab, waktu: x.waktu }));
   }],
+  qaDel: [G, 1, (me, p) => { // hapus satu pertanyaan beserta jawabannya
+    const q = all_('QA').find(x => x.id === p.id); if (!q) return 1;
+    ownMapel_(me, q.mapel); del_('QA', [q]); return 1;
+  }],
+  qaClear: [G, 1, (me, p) => { // kosongkan seluruh tanya jawab satu mapel
+    const m = ownMapel_(me, p.mapel), l = all_('QA').filter(x => x.mapel === m.id);
+    del_('QA', l); return l.length;
+  }],
   jawab: [G, 1, (me, p) => {
     const q = all_('QA').find(x => x.id === p.id); if (!q) throw new Error('Tidak ditemukan');
     ownMapel_(me, q.mapel); upd_('QA', q, { jawab: String(p.t || '').trim().slice(0, 3000) }); return 1;
@@ -599,26 +713,68 @@ const ACT = {
     if (!key) throw new Error('Isi API key Gemini dulu di menu Akun (atau minta admin mengisi di Pengaturan)');
     const pg = Math.max(0, Math.min(20, Number(p.pg) || 0)), ur = Math.max(0, Math.min(10, Number(p.uraian) || 0));
     if (!pg && !ur) throw new Error('Jumlah soal 0');
-    const prompt = 'Kamu pembuat soal SMP sesuai Kurikulum Merdeka dan BSKAP terbaru (Capaian Pembelajaran Fase D). ' +
-      'Mapel: ' + String(p.mapel || '').slice(0, 100) + '. Kelas: ' + String(p.kelas || '').slice(0, 30) + '. Topik/Tujuan Pembelajaran: ' + String(p.topik || '').slice(0, 500) + '. ' +
-      'Buat ' + pg + ' soal pilihan ganda (tepat 4 opsi tanpa awalan huruf, "k" = indeks kunci 0-3) dan ' + ur + ' soal uraian ("k" = pedoman skor singkat). ' +
-      'Bahasa Indonesia baku, jelas, tingkat kognitif bervariasi (C1-C4), hanya satu jawaban benar. ' +
-      'Balas HANYA JSON array: [{"t":"pg","q":"...","o":["..","..","..",".."],"k":0},{"t":"uraian","q":"...","k":"..."}]';
-    const req = {
-      method: 'post', contentType: 'application/json', headers: { 'x-goog-api-key': key }, muteHttpExceptions: true,
-      payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.6, maxOutputTokens: 16384 } })
-    };
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model_(me)) + ':generateContent';
-    let r = UrlFetchApp.fetch(url, req);
-    if ([429, 500, 503].indexOf(r.getResponseCode()) >= 0) { Utilities.sleep(2500); r = UrlFetchApp.fetch(url, req); } // coba ulang sekali
-    if (r.getResponseCode() !== 200) throw new Error('Gemini ' + r.getResponseCode() + ': ' + r.getContentText().slice(0, 200));
-    const a = parseSoal(r.getContentText());
-    if (!a.length) throw new Error('AI tidak mengembalikan soal. Perjelas topik lalu generate ulang');
-    return a;
+    const head = 'Kamu pembuat soal SMP sesuai Kurikulum Merdeka dan BSKAP terbaru (Capaian Pembelajaran Fase D). ' +
+      'Mapel: ' + String(p.mapel || '').slice(0, 100) + '. Kelas: ' + String(p.kelas || '').slice(0, 30) + '. Topik/Tujuan Pembelajaran: ' + String(p.topik || '').slice(0, 500) + '. ';
+    const tail = ' Bahasa Indonesia baku, jelas, hanya satu jawaban benar. Balas HANYA JSON array tanpa teks lain: ' +
+      '[{"t":"pg","q":"...","o":["..","..","..",".."],"k":0},{"t":"uraian","q":"...","k":"..."}] ("k" pada pg = indeks kunci 0-3, pada uraian = pedoman skor singkat).';
+    // Pecah jadi beberapa permintaan kecil yang dijalankan PARALEL (jauh lebih cepat daripada satu permintaan besar)
+    const parts = [];
+    if (pg + ur <= 6) parts.push({ pg, ur });
+    else {
+      const n = Math.ceil(pg / 5);
+      for (let i = 0; i < n; i++) parts.push({ pg: Math.floor(pg / n) + (i < pg % n ? 1 : 0), ur: 0 });
+      if (ur) parts.push({ pg: 0, ur });
+    }
+    const FOK = ['pemahaman konsep dasar dan istilah (C1-C2)', 'penerapan pada contoh nyata (C3)', 'analisis dan perbandingan (C4)', 'pemecahan masalah dan kesalahan umum (C3-C4)', 'proses atau langkah-langkah'];
+    const prompts = parts.map((x, i) => head + 'Buat ' + [x.pg ? x.pg + ' soal pilihan ganda (tepat 4 opsi tanpa awalan huruf)' : '', x.ur ? x.ur + ' soal uraian' : ''].filter(Boolean).join(' dan ') + '.' +
+      (parts.length > 1 ? ' Ini bagian ' + (i + 1) + ' dari ' + parts.length + '; fokus ' + (x.pg ? FOK[i % FOK.length] : 'penalaran tingkat tinggi (C4-C5)') + ', agar tidak sama dengan bagian lain.' : ' Tingkat kognitif bervariasi (C1-C4).') + tail);
+    const res = geminiBatch_(key, model_(me), prompts);
+    let out = [], err = '';
+    res.forEach(r => {
+      try {
+        if (r.getResponseCode() !== 200) throw new Error(gemErr_(r));
+        out = out.concat(parseSoal(r.getContentText()));
+      } catch (e) { err = err || e.message; }
+    });
+    if (!out.length) throw new Error(err || 'AI tidak mengembalikan soal. Perjelas topik lalu generate ulang');
+    return out;
   }]
 };
 
 /* =====================  PARSER HASIL AI  ===================== */
+// Panggil Gemini untuk beberapa prompt sekaligus (paralel) dengan "berpikir" dimatikan/seminimal mungkin agar cepat.
+// Tiap keluarga model memakai pengaturan berbeda (2.5: thinkingBudget; 3.x: thinkingLevel), jadi dicoba bertingkat:
+// budget 0 -> level minimal -> level low -> tanpa pengaturan. Varian yang berhasil diingat per model (cache 6 jam).
+const THINK_VARIANTS = [{ thinkingBudget: 0 }, { thinkingLevel: 'minimal' }, { thinkingLevel: 'low' }, null];
+function gemErr_(r) {
+  const c = r.getResponseCode(), t = r.getContentText();
+  let m = ''; try { m = JSON.parse(t).error.message; } catch (e) { m = t.slice(0, 200); }
+  if (c === 429) return 'Gemini: kuota/batas permintaan tercapai. Tunggu sebentar atau ganti model di menu Akun (mis. gemini-flash-lite-latest)';
+  if (c === 404) return 'Gemini: model tidak ditemukan. Ganti model di menu Akun (mis. gemini-flash-lite-latest)';
+  if (/API key/i.test(m)) return 'Gemini: API key tidak valid. Periksa key di menu Akun';
+  return 'Gemini ' + c + ': ' + String(m).slice(0, 200);
+}
+function geminiBatch_(key, model, prompts) {
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent';
+  const mk = (pr, v) => {
+    const g = { responseMimeType: 'application/json', temperature: 0.6, maxOutputTokens: 8192 };
+    if (v) g.thinkingConfig = v;
+    return { url, method: 'post', contentType: 'application/json', headers: { 'x-goog-api-key': key }, muteHttpExceptions: true, payload: JSON.stringify({ contents: [{ parts: [{ text: pr }] }], generationConfig: g }) };
+  };
+  const ck = 'gv_' + model, cc = CacheService.getScriptCache();
+  let vi = Number(cc.get(ck)); if (!(vi >= 0 && vi < THINK_VARIANTS.length)) vi = 0;
+  let res = UrlFetchApp.fetchAll(prompts.map(x => mk(x, THINK_VARIANTS[vi])));
+  const bad = r => r.getResponseCode() === 400 && !/API key/i.test(r.getContentText());
+  while (res.some(bad) && vi < THINK_VARIANTS.length - 1) { // pengaturan berpikir ditolak model ini -> coba varian berikutnya
+    vi++; const idx = []; res.forEach((r, i) => { if (bad(r)) idx.push(i); });
+    const rr = UrlFetchApp.fetchAll(idx.map(i => mk(prompts[i], THINK_VARIANTS[vi]))); idx.forEach((i, k) => { res[i] = rr[k]; });
+    if (!res.some(bad)) cc.put(ck, String(vi), 21600);
+  }
+  const retry = []; res.forEach((r, i) => { if ([429, 500, 503].indexOf(r.getResponseCode()) >= 0) retry.push(i); });
+  if (retry.length) { Utilities.sleep(2500); const rr = UrlFetchApp.fetchAll(retry.map(i => mk(prompts[i], THINK_VARIANTS[vi]))); retry.forEach((i, k) => { res[i] = rr[k]; }); }
+  return res;
+}
+
 function parseSoal(raw) {
   const j = JSON.parse(raw), c = (j.candidates || [])[0];
   if (!c || !c.content) throw new Error('AI tidak memberi jawaban (' + ((c && c.finishReason) || (j.promptFeedback && j.promptFeedback.blockReason) || 'kosong') + ')');
